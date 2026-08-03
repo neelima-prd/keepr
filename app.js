@@ -147,9 +147,17 @@ async function initAuth() {
   setupAuthUI();
 }
 
-function handleSessionState(session) {
+async function handleSessionState(session) {
   currentSession = session;
   currentUser = session ? session.user : null;
+
+  if (isSupabaseConfigured() && currentUser) {
+    repository.setEngine('supabase');
+  } else {
+    repository.setEngine('local');
+  }
+
+  await loadDatabase();
 
   const headerEl = document.querySelector(".app-header");
   const floatingKeepBtn = document.getElementById("btn-open-keep");
@@ -160,6 +168,10 @@ function handleSessionState(session) {
     if (floatingKeepBtn) floatingKeepBtn.style.display = "";
     
     renderUserProfile(currentUser);
+    renderAll();
+
+    // Check for one-time LocalStorage migration
+    checkAndShowMigrationDialog();
 
     // If on auth route or invalid route, redirect to home
     const hash = window.location.hash || "#home";
@@ -718,6 +730,7 @@ function getTypeIcon(type) {
     case "note": return "file-text";
     case "image": return "image";
     case "pdf": return "file-digit";
+    case "file": return "file";
     case "quote": return "quote";
     default: return "bookmark";
   }
@@ -752,8 +765,8 @@ function createCardElement(item) {
       <span class="quote-author">— ${item.author || 'Unknown'}</span>
     `;
   } else if (item.type === "image") {
-    // If we have local imageUrl or base64
-    const imgUrl = item.imageUrl || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
+    // If we have local imageUrl or base64 or Supabase signed URL
+    const imgUrl = item.imageUrl || item.url || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
     customBodyHtml = `
       <div class="card-image-preview" style="background-image: url('${imgUrl}');"></div>
       <div class="card-content-wrap">
@@ -761,12 +774,13 @@ function createCardElement(item) {
         <p class="card-snippet">${stripHtml(item.content)}</p>
       </div>
     `;
-  } else if (item.type === "pdf") {
+  } else if (item.type === "pdf" || item.type === "file") {
+    const docLabel = item.type === "pdf" ? "PDF" : "DOC";
     customBodyHtml = `
       <div class="pdf-preview-box">
         <div class="pdf-mock-page"></div>
         <div class="pdf-mock-page"></div>
-        <div class="pdf-mock-page">PDF</div>
+        <div class="pdf-mock-page">${docLabel}</div>
       </div>
       <h3 class="card-title">${item.title}</h3>
       <p class="card-snippet">${stripHtml(item.content)}</p>
@@ -1276,6 +1290,15 @@ function registerEventListeners() {
     }
   });
 
+  // Migration Modal listeners
+  const confirmMigrateBtn = document.getElementById("btn-confirm-migration");
+  const skipMigrateBtn = document.getElementById("btn-skip-migration");
+  const skipMigrateXBtn = document.getElementById("btn-skip-migration-x");
+
+  if (confirmMigrateBtn) confirmMigrateBtn.addEventListener("click", handleImportMigration);
+  if (skipMigrateBtn) skipMigrateBtn.addEventListener("click", handleSkipMigration);
+  if (skipMigrateXBtn) skipMigrateXBtn.addEventListener("click", handleSkipMigration);
+
   // Keyboard Shortcuts
   window.addEventListener("keydown", handleKeyboardShortcuts);
 }
@@ -1536,6 +1559,8 @@ function handleKeepItemSubmit(e) {
       itemType = "image";
     } else if (isPdfFile(primaryFile)) {
       itemType = "pdf";
+    } else {
+      itemType = "file";
     }
   }
 
@@ -1571,6 +1596,7 @@ function handleKeepItemSubmit(e) {
     domain: domain,
     author: author,
     imageUrl: imageUrl,
+    storagePath: "",
     tags: [...selectedModalTags],
     createdAt: now,
     updatedAt: now,
@@ -1580,8 +1606,28 @@ function handleKeepItemSubmit(e) {
   const saveItem = async () => {
     if (captureFiles.length > 0) {
       const primaryFile = captureFiles[0];
-      if (isImageFile(primaryFile) || isPdfFile(primaryFile)) {
-        newItem.imageUrl = await repository.uploadFile(primaryFile);
+      try {
+        const uploadRes = await repository.uploadFile(primaryFile);
+        if (uploadRes) {
+          if (typeof uploadRes === "object") {
+            newItem.storagePath = uploadRes.storagePath || "";
+            newItem.imageUrl = uploadRes.fileUrl || "";
+            newItem.fileSize = uploadRes.fileSize || "";
+            newItem.mimeType = uploadRes.mimeType || primaryFile.type || "";
+            newItem.fileName = uploadRes.fileName || primaryFile.name || "";
+            if (newItem.type !== "image" && !newItem.url) {
+              newItem.url = uploadRes.fileUrl || "";
+            }
+          } else if (typeof uploadRes === "string") {
+            newItem.imageUrl = uploadRes;
+            if (!uploadRes.startsWith("data:")) {
+              newItem.storagePath = uploadRes;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Storage upload error:", err);
+        showToast("File upload failed: " + (err.message || "Failed to upload file"), "warning");
       }
     }
 
@@ -1706,23 +1752,32 @@ function renderDetailPreview(item) {
       </div>
     `;
   } else if (item.type === "image") {
-    const imgUrl = item.imageUrl || "assets/linear_project_overview.png";
+    const imgUrl = item.imageUrl || item.url || "assets/linear_project_overview.png";
     container.innerHTML = `
       <div class="rich-image-preview">
         <img src="${imgUrl}" alt="${escapeHtml(item.title)}">
       </div>
     `;
-  } else if (item.type === "pdf") {
+  } else if (item.type === "pdf" || item.type === "file") {
+    const fileLabel = item.type === "pdf" ? "PDF Document" : "Document";
+    const fileLink = item.url || item.imageUrl || "#";
     container.innerHTML = `
       <div class="rich-pdf-preview">
-        <div class="pdf-icon-wrap">PDF</div>
+        <div class="pdf-icon-wrap">${item.type === "pdf" ? "PDF" : "DOC"}</div>
         <div class="pdf-details">
-          <span class="pdf-name">${escapeHtml(item.title)}.pdf</span>
-          <span class="pdf-meta">Document Preview</span>
+          <span class="pdf-name">${escapeHtml(item.title)}</span>
+          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : fileLabel} ${item.storagePath ? '• Supabase Storage' : ''}</span>
         </div>
-        <button class="btn btn-secondary btn-sm" type="button" onclick="showToast('Opening PDF document viewer...', 'info')">
-          <i data-lucide="eye"></i>
-        </button>
+        ${fileLink && fileLink !== '#' ? `
+          <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" download="${escapeHtml(item.title)}">
+            <i data-lucide="download"></i>
+            <span>Open</span>
+          </a>
+        ` : `
+          <button class="btn btn-secondary btn-sm" type="button" onclick="showToast('Opening document viewer...', 'info')">
+            <i data-lucide="eye"></i>
+          </button>
+        `}
       </div>
     `;
   } else {
@@ -1811,6 +1866,163 @@ async function handleDeleteDetailItem() {
   renderAll();
   lucide.createIcons();
   showToast("Memory deleted", "info");
+}
+
+/* -------------------------------------------------------------
+ * One-time LocalStorage Migration
+ * ------------------------------------------------------------- */
+function checkAndShowMigrationDialog() {
+  const isHandled = localStorage.getItem("keepr_migration_handled");
+  if (isHandled === "true") return;
+
+  const localRaw = localStorage.getItem("keepr_db");
+  if (!localRaw) return;
+
+  try {
+    const localItems = JSON.parse(localRaw);
+    if (Array.isArray(localItems) && localItems.length > 0) {
+      const modal = document.getElementById("migration-modal");
+      if (modal) {
+        const descEl = document.getElementById("migration-modal-desc");
+        if (descEl) {
+          descEl.textContent = `We found ${localItems.length} ${localItems.length === 1 ? 'memory' : 'memories'} saved locally in your browser. Would you like to import them into your cloud account?`;
+        }
+        modal.classList.add("active");
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
+  } catch (e) {
+    console.warn("Error parsing local keepr_db for migration check:", e);
+  }
+}
+
+function dataURLtoFile(dataurl, filename) {
+  try {
+    const arr = dataurl.split(',');
+    if (arr.length < 2) return null;
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr[n];
+    }
+    const ext = mime.split('/')[1] || 'png';
+    return new File([u8arr], filename ? `${filename}.${ext}` : `imported_${Date.now()}.${ext}`, { type: mime });
+  } catch (e) {
+    console.warn("dataURLtoFile conversion error:", e);
+    return null;
+  }
+}
+
+async function handleImportMigration() {
+  const modal = document.getElementById("migration-modal");
+  const statusEl = document.getElementById("migration-status-text");
+  const importBtn = document.getElementById("btn-confirm-migration");
+  const skipBtn = document.getElementById("btn-skip-migration");
+
+  if (importBtn) importBtn.disabled = true;
+  if (skipBtn) skipBtn.disabled = true;
+
+  const localRaw = localStorage.getItem("keepr_db");
+  if (!localRaw) {
+    localStorage.setItem("keepr_migration_handled", "true");
+    if (modal) modal.classList.remove("active");
+    return;
+  }
+
+  let localItems = [];
+  try {
+    localItems = JSON.parse(localRaw);
+  } catch (e) {
+    localItems = [];
+  }
+
+  if (localItems.length === 0) {
+    localStorage.setItem("keepr_migration_handled", "true");
+    if (modal) modal.classList.remove("active");
+    return;
+  }
+
+  let importedCount = 0;
+  for (let i = 0; i < localItems.length; i++) {
+    const item = { ...localItems[i] };
+    if (statusEl) {
+      statusEl.textContent = `Importing (${i + 1}/${localItems.length})...`;
+    }
+
+    // Convert and upload files if base64 or relative asset
+    const dataUrl = (item.imageUrl && item.imageUrl.startsWith("data:"))
+      ? item.imageUrl
+      : ((item.url && item.url.startsWith("data:")) ? item.url : null);
+
+    if (dataUrl) {
+      const file = dataURLtoFile(dataUrl, item.title ? item.title.replace(/[^a-z0-9]/gi, '_') : `imported_${i}`);
+      if (file) {
+        try {
+          const uploadRes = await repository.supabaseRepo.uploadFile(file);
+          if (uploadRes && uploadRes.storagePath) {
+            item.storagePath = uploadRes.storagePath;
+            item.imageUrl = uploadRes.fileUrl;
+            item.fileSize = uploadRes.fileSize || item.fileSize;
+            item.mimeType = uploadRes.mimeType || item.mimeType;
+            item.fileName = uploadRes.fileName || item.fileName;
+            if (item.type !== "image" && !item.url) {
+              item.url = uploadRes.fileUrl;
+            }
+          }
+        } catch (uploadErr) {
+          console.warn("Failed uploading base64 file during migration:", uploadErr);
+        }
+      }
+    } else if (item.imageUrl && item.imageUrl.startsWith("assets/")) {
+      try {
+        const res = await fetch(item.imageUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          const fileName = item.imageUrl.split('/').pop() || 'asset.png';
+          const file = new File([blob], fileName, { type: blob.type || 'image/png' });
+          const uploadRes = await repository.supabaseRepo.uploadFile(file);
+          if (uploadRes && uploadRes.storagePath) {
+            item.storagePath = uploadRes.storagePath;
+            item.imageUrl = uploadRes.fileUrl;
+            item.fileSize = uploadRes.fileSize || item.fileSize;
+          }
+        }
+      } catch (assetErr) {
+        console.warn("Failed uploading relative asset during migration:", assetErr);
+      }
+    }
+
+    try {
+      await repository.supabaseRepo.createArtifact(item);
+      importedCount++;
+    } catch (createErr) {
+      console.error("Error creating artifact in Supabase during migration:", item.title, createErr);
+    }
+  }
+
+  // Clear LocalStorage and record handled flag
+  localStorage.removeItem("keepr_db");
+  localStorage.setItem("keepr_migration_handled", "true");
+
+  if (modal) modal.classList.remove("active");
+  if (importBtn) importBtn.disabled = false;
+  if (skipBtn) skipBtn.disabled = false;
+
+  showToast(`Successfully imported ${importedCount} ${importedCount === 1 ? 'memory' : 'memories'}!`, "success");
+
+  await loadDatabase();
+  renderAll();
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function handleSkipMigration() {
+  localStorage.setItem("keepr_migration_handled", "true");
+  const modal = document.getElementById("migration-modal");
+  if (modal) modal.classList.remove("active");
+  showToast("Import skipped", "info");
 }
 
 /* -------------------------------------------------------------

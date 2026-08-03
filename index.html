@@ -477,6 +477,31 @@
     </div>
   </div>
 
+  <!-- MIGRATION MODAL -->
+  <div class="modal-backdrop" id="migration-modal">
+    <div class="modal-card" style="max-width: 460px;">
+      <div class="modal-header">
+        <span class="modal-title">Cloud Import</span>
+        <button class="modal-close-btn" id="btn-skip-migration-x" type="button">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div style="margin-bottom: 24px;">
+        <h2 style="font-size: 1.35rem; font-weight: 600; color: var(--color-text); margin-bottom: 10px;">Import your existing memories?</h2>
+        <p style="font-size: 0.925rem; color: var(--color-text-secondary); line-height: 1.5;" id="migration-modal-desc">
+          We found memories saved locally in your browser. Would you like to import them into your cloud account?
+        </p>
+      </div>
+      <div class="modal-footer-actions">
+        <span class="modal-status" id="migration-status-text"></span>
+        <div class="footer-buttons" style="display: flex; gap: 10px; width: 100%; justify-content: flex-end;">
+          <button class="btn btn-tertiary" type="button" id="btn-skip-migration">Skip</button>
+          <button class="btn btn-primary" type="button" id="btn-confirm-migration">Import</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- DETAIL DRAWER -->
   <div class="drawer-backdrop" id="detail-drawer">
     <div class="drawer-panel">

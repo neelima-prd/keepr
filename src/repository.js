@@ -131,6 +131,10 @@ export class LocalStorageArtifactRepository {
     }
   }
 
+  async getArtifacts() {
+    return this.getAll();
+  }
+
   async getById(id) {
     const items = await this.getAll();
     return items.find(item => item.id === id) || null;
@@ -148,6 +152,10 @@ export class LocalStorageArtifactRepository {
     return item;
   }
 
+  async createArtifact(item) {
+    return this.add(item);
+  }
+
   async update(id, updates) {
     const items = await this.getAll();
     const index = items.findIndex(item => item.id === id);
@@ -157,11 +165,19 @@ export class LocalStorageArtifactRepository {
     return items[index];
   }
 
+  async updateArtifact(id, updates) {
+    return this.update(id, updates);
+  }
+
   async delete(id) {
     let items = await this.getAll();
     items = items.filter(item => item.id !== id);
     await this.saveAll(items);
     return true;
+  }
+
+  async deleteArtifact(id) {
+    return this.delete(id);
   }
 
   async reset() {
@@ -175,9 +191,22 @@ export class LocalStorageArtifactRepository {
   }
 
   async uploadFile(file) {
+    const formatFileSize = (bytes) => {
+      if (!bytes || isNaN(bytes)) return '';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
+      reader.onload = () => resolve({
+        storagePath: '',
+        fileUrl: reader.result,
+        fileName: file.name,
+        fileSize: formatFileSize(file.size),
+        mimeType: file.type
+      });
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
@@ -189,199 +218,428 @@ export class SupabaseArtifactRepository {
     this.bucketName = 'keepr-artifacts';
   }
 
-  async getAll() {
-    if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
+  async getCurrentUserId() {
+    if (!isSupabaseConfigured()) return null;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      return user ? user.id : null;
+    } catch (e) {
+      console.warn("Failed to get current user ID from Supabase Auth:", e);
+      return null;
+    }
+  }
 
-    const { data, error } = await supabase
-      .from('artifacts')
-      .select(`
-        *,
-        artifact_tags (
-          tags (
-            name
-          )
-        )
-      `)
-      .order('created_at', { ascending: false });
+  /**
+   * Helper to map database row into frontend artifact model.
+   */
+  async mapRowToArtifact(row) {
+    const metadata = row.metadata || {};
+    let imageUrl = metadata.image_url || metadata.thumbnail_url || '';
+    let externalUrl = row.external_url || metadata.source_url || '';
 
-    if (error) {
-      console.error("Error fetching artifacts from Supabase:", error);
-      throw error;
+    // If storage_path is present, generate a fresh signed URL for file previews/downloads
+    if (row.storage_path) {
+      try {
+        const { data: signedData } = await supabase.storage
+          .from(this.bucketName)
+          .createSignedUrl(row.storage_path, 60 * 60 * 24); // 24-hour expiration
+        
+        if (signedData && signedData.signedUrl) {
+          imageUrl = signedData.signedUrl;
+          if (!externalUrl || row.artifact_type === 'pdf' || row.artifact_type === 'file') {
+            externalUrl = signedData.signedUrl;
+          }
+        } else {
+          const { data: publicUrlData } = supabase.storage
+            .from(this.bucketName)
+            .getPublicUrl(row.storage_path);
+          if (publicUrlData && publicUrlData.publicUrl) {
+            imageUrl = publicUrlData.publicUrl;
+            if (!externalUrl || row.artifact_type === 'pdf' || row.artifact_type === 'file') {
+              externalUrl = publicUrlData.publicUrl;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Could not generate signed URL for storage path:", row.storage_path, err);
+      }
     }
 
-    return data.map(row => ({
+    return {
       id: row.id,
-      title: row.title,
-      type: row.artifact_type,
-      content: row.content || row.note || '',
-      url: row.source_url || '',
-      imageUrl: row.thumbnail_url || row.image_url || '',
-      domain: row.domain || '',
-      author: row.author || '',
-      source: row.source || '',
-      fileSize: row.file_size || '',
-      createdAt: new Date(row.created_at).getTime(),
-      updatedAt: new Date(row.updated_at).getTime(),
+      title: row.title || '',
+      type: row.artifact_type || 'note',
+      content: row.content || '',
+      url: externalUrl,
+      domain: metadata.domain || '',
+      author: metadata.author || '',
+      imageUrl: imageUrl,
+      storagePath: row.storage_path || '',
+      source: metadata.source || 'upload',
+      fileSize: metadata.file_size || '',
+      mimeType: metadata.mime_type || '',
+      fileName: metadata.file_name || '',
+      createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+      updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
       tags: row.artifact_tags ? row.artifact_tags.map(at => at.tags?.name).filter(Boolean) : []
-    }));
+    };
+  }
+
+  async getAll() {
+    return this.getArtifacts();
+  }
+
+  async getArtifacts() {
+    if (!isSupabaseConfigured()) {
+      console.warn("Supabase is not configured.");
+      return [];
+    }
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) {
+      return [];
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('artifacts')
+        .select(`
+          *,
+          artifact_tags (
+            tags (
+              name
+            )
+          )
+        `)
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Error fetching artifacts from Supabase:", error);
+        return [];
+      }
+
+      if (!data) return [];
+      return await Promise.all(data.map(row => this.mapRowToArtifact(row)));
+    } catch (err) {
+      console.error("Unexpected error fetching artifacts from Supabase:", err);
+      return [];
+    }
   }
 
   async getById(id) {
-    if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
-    const items = await this.getAll();
-    return items.find(item => item.id === id) || null;
+    if (!isSupabaseConfigured()) return null;
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('artifacts')
+        .select(`
+          *,
+          artifact_tags (
+            tags (
+              name
+            )
+          )
+        `)
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error || !data) return null;
+      return await this.mapRowToArtifact(data);
+    } catch (err) {
+      console.error("Error fetching artifact by ID from Supabase:", err);
+      return null;
+    }
   }
 
   async add(item) {
+    return this.createArtifact(item);
+  }
+
+  async createArtifact(item) {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) {
+      throw new Error("User must be signed in to create an artifact");
+    }
+
+    const metadata = {
+      domain: item.domain || '',
+      author: item.author || '',
+      source: item.source || 'upload',
+      file_size: item.fileSize || '',
+      mime_type: item.mimeType || '',
+      file_name: item.fileName || '',
+      image_url: item.imageUrl || '',
+      thumbnail_url: item.imageUrl || ''
+    };
+
+    const validTypes = ['note', 'link', 'image', 'pdf', 'file', 'quote'];
+    const artifactType = validTypes.includes(item.type) ? item.type : 'note';
+
+    const payload = {
+      user_id: userId,
+      artifact_type: artifactType,
+      title: item.title || '',
+      content: item.content || '',
+      external_url: item.url || '',
+      storage_path: item.storagePath || '',
+      metadata: metadata,
+      created_at: item.createdAt ? new Date(item.createdAt).toISOString() : new Date().toISOString(),
+      updated_at: item.updatedAt ? new Date(item.updatedAt).toISOString() : new Date().toISOString()
+    };
 
     const { data: artifactData, error: artifactError } = await supabase
       .from('artifacts')
-      .insert({
-        title: item.title,
-        artifact_type: item.type,
-        note: item.content,
-        content: item.content,
-        source_url: item.url,
-        thumbnail_url: item.imageUrl,
-        image_url: item.imageUrl,
-        domain: item.domain,
-        author: item.author,
-        source: item.source,
-        file_size: item.fileSize,
-        created_at: new Date(item.createdAt || Date.now()).toISOString(),
-        updated_at: new Date(item.updatedAt || Date.now()).toISOString()
-      })
+      .insert(payload)
       .select()
       .single();
 
     if (artifactError) {
       console.error("Error inserting artifact to Supabase:", artifactError);
-      throw artifactError;
+      throw new Error(`Failed to save artifact: ${artifactError.message}`);
     }
 
-    if (item.tags && item.tags.length > 0) {
-      for (const tagName of item.tags) {
-        const { data: tagData } = await supabase
-          .from('tags')
-          .upsert({ name: tagName }, { onConflict: 'name' })
-          .select()
-          .single();
-
-        if (tagData) {
-          await supabase.from('artifact_tags').insert({
-            artifact_id: artifactData.id,
-            tag_id: tagData.id
-          });
-        }
-      }
+    if (item.tags && Array.isArray(item.tags) && item.tags.length > 0) {
+      await this.syncArtifactTags(artifactData.id, userId, item.tags);
     }
 
-    return { ...item, id: artifactData.id };
+    return this.getById(artifactData.id);
   }
 
   async update(id, updates) {
+    return this.updateArtifact(id, updates);
+  }
+
+  async updateArtifact(id, updates) {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
 
-    const payload = {};
+    const userId = await this.getCurrentUserId();
+    if (!userId) {
+      throw new Error("User must be signed in to update an artifact");
+    }
+
+    // Fetch existing row to preserve/merge metadata
+    const { data: existing } = await supabase
+      .from('artifacts')
+      .select('metadata')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const currentMetadata = (existing && existing.metadata) ? existing.metadata : {};
+    const updatedMetadata = { ...currentMetadata };
+
+    const payload = {
+      updated_at: new Date().toISOString()
+    };
+
     if (updates.title !== undefined) payload.title = updates.title;
-    if (updates.content !== undefined) {
-      payload.note = updates.content;
-      payload.content = updates.content;
-    }
-    if (updates.url !== undefined) payload.source_url = updates.url;
+    if (updates.content !== undefined) payload.content = updates.content;
+    if (updates.type !== undefined) payload.artifact_type = updates.type;
+    if (updates.url !== undefined) payload.external_url = updates.url;
+    if (updates.storagePath !== undefined) payload.storage_path = updates.storagePath;
+
+    if (updates.domain !== undefined) updatedMetadata.domain = updates.domain;
+    if (updates.author !== undefined) updatedMetadata.author = updates.author;
+    if (updates.source !== undefined) updatedMetadata.source = updates.source;
+    if (updates.fileSize !== undefined) updatedMetadata.file_size = updates.fileSize;
     if (updates.imageUrl !== undefined) {
-      payload.thumbnail_url = updates.imageUrl;
-      payload.image_url = updates.imageUrl;
+      updatedMetadata.image_url = updates.imageUrl;
+      updatedMetadata.thumbnail_url = updates.imageUrl;
     }
-    if (updates.domain !== undefined) payload.domain = updates.domain;
-    payload.updated_at = new Date().toISOString();
+
+    payload.metadata = updatedMetadata;
 
     const { error: updateError } = await supabase
       .from('artifacts')
       .update(payload)
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', userId);
 
     if (updateError) {
       console.error("Error updating artifact in Supabase:", updateError);
-      throw updateError;
+      throw new Error(`Failed to update artifact: ${updateError.message}`);
     }
 
-    if (updates.tags !== undefined) {
-      await supabase.from('artifact_tags').delete().eq('artifact_id', id);
-      for (const tagName of updates.tags) {
-        const { data: tagData } = await supabase
-          .from('tags')
-          .upsert({ name: tagName }, { onConflict: 'name' })
-          .select()
-          .single();
-
-        if (tagData) {
-          await supabase.from('artifact_tags').insert({
-            artifact_id: id,
-            tag_id: tagData.id
-          });
-        }
-      }
+    if (updates.tags !== undefined && Array.isArray(updates.tags)) {
+      await this.syncArtifactTags(id, userId, updates.tags);
     }
 
-    return true;
+    return this.getById(id);
   }
 
   async delete(id) {
+    return this.deleteArtifact(id);
+  }
+
+  async deleteArtifact(id) {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
-    const { error } = await supabase.from('artifacts').delete().eq('id', id);
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) {
+      throw new Error("User must be signed in to delete an artifact");
+    }
+
+    const { error } = await supabase
+      .from('artifacts')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+
     if (error) {
       console.error("Error deleting artifact from Supabase:", error);
-      throw error;
+      throw new Error(`Failed to delete artifact: ${error.message}`);
     }
+
     return true;
   }
 
-  async reset() {
-    if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
-    await supabase.from('artifacts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    for (const item of INITIAL_DATA) {
-      await this.add(item);
+  async syncArtifactTags(artifactId, userId, tagNames) {
+    try {
+      await supabase.from('artifact_tags').delete().eq('artifact_id', artifactId);
+
+      for (const tagName of tagNames) {
+        if (!tagName || !tagName.trim()) continue;
+        const cleanTagName = tagName.trim();
+
+        let tagId = null;
+
+        const { data: tagData } = await supabase
+          .from('tags')
+          .upsert(
+            { user_id: userId, name: cleanTagName },
+            { onConflict: 'user_id,name' }
+          )
+          .select('id')
+          .maybeSingle();
+
+        if (tagData && tagData.id) {
+          tagId = tagData.id;
+        } else {
+          const { data: existingTag } = await supabase
+            .from('tags')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('name', cleanTagName)
+            .maybeSingle();
+
+          if (existingTag) {
+            tagId = existingTag.id;
+          }
+        }
+
+        if (tagId) {
+          await supabase.from('artifact_tags').insert({
+            artifact_id: artifactId,
+            tag_id: tagId
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Error syncing tags for artifact:", err);
     }
-    return this.getAll();
+  }
+
+  async reset() {
+    if (!isSupabaseConfigured()) return [];
+    const userId = await this.getCurrentUserId();
+    if (!userId) return [];
+
+    await supabase.from('artifacts').delete().eq('user_id', userId);
+
+    for (const item of INITIAL_DATA) {
+      await this.createArtifact(item);
+    }
+
+    return this.getArtifacts();
   }
 
   async clear() {
-    if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
-    await supabase.from('artifacts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    if (!isSupabaseConfigured()) return [];
+    const userId = await this.getCurrentUserId();
+    if (!userId) return [];
+
+    await supabase.from('artifacts').delete().eq('user_id', userId);
     return [];
   }
 
   async uploadFile(file) {
     if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
-    const fileExt = file.name.split('.').pop();
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error("User must be signed in to upload files");
+
+    const fileExt = file.name.split('.').pop() || 'bin';
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = `uploads/${fileName}`;
+    const filePath = `${userId}/${fileName}`;
 
-    const { error } = await supabase.storage
-      .from(this.bucketName)
-      .upload(filePath, file);
+    const formatFileSize = (bytes) => {
+      if (!bytes || isNaN(bytes)) return '';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
 
-    if (error) {
-      console.error("Error uploading file to Supabase storage:", error);
-      throw error;
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(this.bucketName)
+        .upload(filePath, file, { upsert: true, contentType: file.type });
+
+      if (uploadError) {
+        console.error("Error uploading file to Supabase storage:", uploadError);
+        throw uploadError;
+      }
+
+      let fileUrl = '';
+      try {
+        const { data: signedData } = await supabase.storage
+          .from(this.bucketName)
+          .createSignedUrl(filePath, 60 * 60 * 24);
+        if (signedData && signedData.signedUrl) {
+          fileUrl = signedData.signedUrl;
+        }
+      } catch (err) {
+        console.warn("Could not create signed URL:", err);
+      }
+
+      if (!fileUrl) {
+        const { data: publicUrlData } = supabase.storage
+          .from(this.bucketName)
+          .getPublicUrl(filePath);
+        fileUrl = publicUrlData ? publicUrlData.publicUrl : filePath;
+      }
+
+      return {
+        storagePath: filePath,
+        fileUrl: fileUrl,
+        fileName: file.name,
+        fileSize: formatFileSize(file.size),
+        mimeType: file.type
+      };
+    } catch (err) {
+      console.error("Failed to upload file to storage:", err);
+      throw err;
     }
-
-    const { data: publicUrlData } = supabase.storage
-      .from(this.bucketName)
-      .getPublicUrl(filePath);
-
-    return publicUrlData.publicUrl;
   }
 }
 
-class RepositoryService {
+export class RepositoryService {
   constructor() {
     this.localRepo = new LocalStorageArtifactRepository();
     this.supabaseRepo = new SupabaseArtifactRepository();
-    // Default to LocalStorage repository for current sprint as instructed
-    this.activeRepo = this.localRepo;
+    
+    if (isSupabaseConfigured()) {
+      this.activeRepo = this.supabaseRepo;
+    } else {
+      this.activeRepo = this.localRepo;
+    }
   }
 
   setEngine(engine) {
@@ -396,37 +654,18 @@ class RepositoryService {
     return this.activeRepo === this.supabaseRepo ? 'supabase' : 'local';
   }
 
-  async getAll() {
-    return this.activeRepo.getAll();
-  }
-
-  async getById(id) {
-    return this.activeRepo.getById(id);
-  }
-
-  async add(item) {
-    return this.activeRepo.add(item);
-  }
-
-  async update(id, updates) {
-    return this.activeRepo.update(id, updates);
-  }
-
-  async delete(id) {
-    return this.activeRepo.delete(id);
-  }
-
-  async reset() {
-    return this.activeRepo.reset();
-  }
-
-  async clear() {
-    return this.activeRepo.clear();
-  }
-
-  async uploadFile(file) {
-    return this.activeRepo.uploadFile(file);
-  }
+  async getAll() { return this.activeRepo.getAll(); }
+  async getArtifacts() { return this.activeRepo.getArtifacts ? this.activeRepo.getArtifacts() : this.activeRepo.getAll(); }
+  async getById(id) { return this.activeRepo.getById(id); }
+  async add(item) { return this.activeRepo.add(item); }
+  async createArtifact(item) { return this.activeRepo.createArtifact ? this.activeRepo.createArtifact(item) : this.activeRepo.add(item); }
+  async update(id, updates) { return this.activeRepo.update(id, updates); }
+  async updateArtifact(id, updates) { return this.activeRepo.updateArtifact ? this.activeRepo.updateArtifact(id, updates) : this.activeRepo.update(id, updates); }
+  async delete(id) { return this.activeRepo.delete(id); }
+  async deleteArtifact(id) { return this.activeRepo.deleteArtifact ? this.activeRepo.deleteArtifact(id) : this.activeRepo.delete(id); }
+  async reset() { return this.activeRepo.reset(); }
+  async clear() { return this.activeRepo.clear(); }
+  async uploadFile(file) { return this.activeRepo.uploadFile(file); }
 }
 
 export const repository = new RepositoryService();
