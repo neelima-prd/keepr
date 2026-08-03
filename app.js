@@ -3,7 +3,7 @@
  * ------------------------------------------------------------- */
 
 import { repository, INITIAL_DATA } from './src/repository.js';
-
+import { supabase, isSupabaseConfigured } from './src/supabase.js';
 
 // App State
 let database = [];
@@ -14,9 +14,15 @@ let searchQuery = "";
 let captureFiles = [];
 let currentDetailItem = null;
 
+// Auth State
+let currentUser = null;
+let currentSession = null;
+let authMode = "signin"; // "signin" | "signup" | "forgot"
+
 // Initialize App
 document.addEventListener("DOMContentLoaded", async () => {
   await loadDatabase();
+  await initAuth();
   initRouter();
   initThemeAndDensity();
   registerEventListeners();
@@ -45,10 +51,15 @@ async function resetDatabase() {
 }
 
 /* -------------------------------------------------------------
- * Routing
+ * Routing & Protected Routes
  * ------------------------------------------------------------- */
 function initRouter() {
   const handleHash = () => {
+    if (!currentUser) {
+      showAuthView();
+      return;
+    }
+
     const hash = window.location.hash || "#home";
     const tabName = hash.substring(1);
     
@@ -66,6 +77,11 @@ function initRouter() {
 }
 
 function navigateToTab(tabName) {
+  if (!currentUser) {
+    showAuthView();
+    return;
+  }
+
   currentTab = tabName;
   
   // Update header tab active status
@@ -91,11 +107,371 @@ function navigateToTab(tabName) {
 
   // Custom behavior per tab
   if (tabName === "search") {
-    // Automatically focus search box when switching to search view
     setTimeout(() => {
       document.getElementById("search-input").focus();
     }, 150);
   }
+}
+
+/* -------------------------------------------------------------
+ * Authentication & Session Management (Supabase Auth)
+ * ------------------------------------------------------------- */
+async function initAuth() {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      handleSessionState(session);
+
+      supabase.auth.onAuthStateChange((_event, session) => {
+        handleSessionState(session);
+      });
+    } catch (e) {
+      console.warn("Supabase auth check failed:", e);
+      handleSessionState(null);
+    }
+  } else {
+    // Check local demo session fallback
+    const savedDemoSession = localStorage.getItem("keepr_auth_session");
+    if (savedDemoSession) {
+      try {
+        const parsedSession = JSON.parse(savedDemoSession);
+        handleSessionState(parsedSession);
+      } catch (e) {
+        handleSessionState(null);
+      }
+    } else {
+      handleSessionState(null);
+    }
+  }
+
+  setupAuthUI();
+}
+
+function handleSessionState(session) {
+  currentSession = session;
+  currentUser = session ? session.user : null;
+
+  const headerEl = document.querySelector(".app-header");
+  const floatingKeepBtn = document.getElementById("btn-open-keep");
+
+  if (currentUser) {
+    // Authenticated user
+    if (headerEl) headerEl.style.display = "";
+    if (floatingKeepBtn) floatingKeepBtn.style.display = "";
+    
+    renderUserProfile(currentUser);
+
+    // If on auth route or invalid route, redirect to home
+    const hash = window.location.hash || "#home";
+    if (hash === "#auth" || !["#home", "#search", "#settings"].includes(hash)) {
+      window.location.hash = "#home";
+      navigateToTab("home");
+    } else {
+      navigateToTab(hash.substring(1));
+    }
+  } else {
+    // Unauthenticated user
+    if (headerEl) headerEl.style.display = "none";
+    if (floatingKeepBtn) floatingKeepBtn.style.display = "none";
+
+    showAuthView();
+  }
+}
+
+function showAuthView() {
+  window.location.hash = "#auth";
+  document.querySelectorAll(".view-panel").forEach(panel => {
+    if (panel.id === "view-auth") {
+      panel.classList.add("active");
+    } else {
+      panel.classList.remove("active");
+    }
+  });
+}
+
+function renderUserProfile(user) {
+  if (!user) return;
+  const email = user.email || "user@keepr.app";
+  const fullName = user.user_metadata?.full_name || user.user_metadata?.name || email.split("@")[0];
+  const firstName = fullName.split(" ")[0] || fullName;
+  const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture || null;
+  const initial = fullName ? fullName.charAt(0).toUpperCase() : "K";
+
+  // Header profile
+  const headerAvatar = document.getElementById("header-profile-avatar");
+  const headerName = document.getElementById("header-profile-name");
+  if (headerName) headerName.textContent = firstName;
+  if (headerAvatar) {
+    if (avatarUrl) {
+      headerAvatar.innerHTML = `
+        <img src="${escapeHtml(avatarUrl)}" class="avatar-img" alt="${escapeHtml(fullName)}">
+        <span class="profile-name" id="header-profile-name">${escapeHtml(firstName)}</span>
+      `;
+    } else {
+      headerAvatar.innerHTML = `
+        <span class="avatar-letter" id="header-avatar-letter">${escapeHtml(initial)}</span>
+        <span class="profile-name" id="header-profile-name">${escapeHtml(firstName)}</span>
+      `;
+    }
+  }
+
+  // Settings profile card
+  const settingsAvatar = document.getElementById("settings-avatar-large");
+  const settingsName = document.getElementById("settings-profile-name");
+  const settingsEmail = document.getElementById("settings-profile-email");
+  
+  if (settingsName) settingsName.textContent = fullName;
+  if (settingsEmail) settingsEmail.textContent = email;
+  if (settingsAvatar) {
+    if (avatarUrl) {
+      settingsAvatar.innerHTML = `<img src="${escapeHtml(avatarUrl)}" class="avatar-img-large" alt="${escapeHtml(fullName)}">`;
+    } else {
+      settingsAvatar.textContent = initial;
+    }
+  }
+
+  // Home dynamic greeting
+  const greetingEl = document.getElementById("dynamic-greeting");
+  if (greetingEl) {
+    const hour = new Date().getHours();
+    let timeStr = "day";
+    if (hour < 12) timeStr = "morning";
+    else if (hour < 18) timeStr = "afternoon";
+    else timeStr = "evening";
+    greetingEl.textContent = `Good ${timeStr}, ${firstName} 👋`;
+  }
+}
+
+function loginAsDemoGoogleUser() {
+  const demoUser = {
+    id: 'demo-google-user',
+    email: 'james@keepr.app',
+    user_metadata: {
+      full_name: 'James Bond',
+      avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80'
+    }
+  };
+  const demoSession = { user: demoUser, access_token: 'demo-token' };
+  localStorage.setItem('keepr_auth_session', JSON.stringify(demoSession));
+  handleSessionState(demoSession);
+  showToast("Signed in as James Bond (Google)", "success");
+}
+
+function setupAuthUI() {
+  // Google Login CTA
+  const googleBtn = document.getElementById("btn-google-login");
+  if (googleBtn) {
+    googleBtn.addEventListener("click", async () => {
+      hideAuthAlert();
+      if (isSupabaseConfigured()) {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin
+          }
+        });
+        if (error) {
+          const errMsg = error.message || "";
+          const isProviderDisabled = errMsg.toLowerCase().includes("provider is not enabled") ||
+                                     errMsg.toLowerCase().includes("unsupported provider") ||
+                                     error.status === 400;
+          if (isProviderDisabled) {
+            showAuthAlertHTML(`
+              <div style="font-weight: 600; margin-bottom: 4px;">Google Auth Not Enabled in Supabase</div>
+              <div style="margin-bottom: 8px;">To enable Google Sign-In, go to your <strong>Supabase Dashboard</strong> &rarr; <strong>Authentication</strong> &rarr; <strong>Providers</strong> &rarr; enable <strong>Google</strong> and paste your Google OAuth Client ID & Secret.</div>
+              <button id="btn-demo-google-fallback" type="button" class="btn btn-tertiary" style="width: 100%; font-size: 0.8125rem; padding: 6px 12px;">
+                Continue with Demo Google Sign-In
+              </button>
+            `, "info");
+
+            setTimeout(() => {
+              document.getElementById("btn-demo-google-fallback")?.addEventListener("click", () => {
+                loginAsDemoGoogleUser();
+              });
+            }, 50);
+          } else {
+            showAuthAlert(error.message, "error");
+          }
+        }
+      } else {
+        loginAsDemoGoogleUser();
+      }
+    });
+  }
+
+  // Auth Mode Tabs (Sign In / Sign Up / Forgot Password)
+  const tabSignin = document.getElementById("tab-auth-signin");
+  const tabSignup = document.getElementById("tab-auth-signup");
+  const tabForgot = document.getElementById("tab-auth-forgot");
+
+  const setAuthMode = (mode) => {
+    authMode = mode;
+    hideAuthAlert();
+
+    [tabSignin, tabSignup, tabForgot].forEach(tab => {
+      if (tab) {
+        if (tab.getAttribute("data-auth-mode") === mode) {
+          tab.classList.add("active");
+        } else {
+          tab.classList.remove("active");
+        }
+      }
+    });
+
+    const fieldName = document.getElementById("auth-field-name");
+    const fieldPassword = document.getElementById("auth-field-password");
+    const submitBtnSpan = document.querySelector("#btn-auth-submit span");
+
+    if (mode === "signin") {
+      if (fieldName) fieldName.style.display = "none";
+      if (fieldPassword) fieldPassword.style.display = "block";
+      if (submitBtnSpan) submitBtnSpan.textContent = "Sign In";
+    } else if (mode === "signup") {
+      if (fieldName) fieldName.style.display = "block";
+      if (fieldPassword) fieldPassword.style.display = "block";
+      if (submitBtnSpan) submitBtnSpan.textContent = "Create Account";
+    } else if (mode === "forgot") {
+      if (fieldName) fieldName.style.display = "none";
+      if (fieldPassword) fieldPassword.style.display = "none";
+      if (submitBtnSpan) submitBtnSpan.textContent = "Send Reset Link";
+    }
+  };
+
+  if (tabSignin) tabSignin.addEventListener("click", () => setAuthMode("signin"));
+  if (tabSignup) tabSignup.addEventListener("click", () => setAuthMode("signup"));
+  if (tabForgot) tabForgot.addEventListener("click", () => setAuthMode("forgot"));
+
+  // Email Form Submit
+  const emailForm = document.getElementById("auth-email-form");
+  if (emailForm) {
+    emailForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideAuthAlert();
+
+      const nameVal = document.getElementById("auth-input-name")?.value.trim() || "";
+      const emailVal = document.getElementById("auth-input-email")?.value.trim() || "";
+      const passVal = document.getElementById("auth-input-password")?.value || "";
+
+      if (!emailVal) {
+        showAuthAlert("Please enter a valid email address.", "error");
+        return;
+      }
+
+      const submitBtn = document.getElementById("btn-auth-submit");
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        if (authMode === "signin") {
+          if (isSupabaseConfigured()) {
+            const { data, error } = await supabase.auth.signInWithPassword({
+              email: emailVal,
+              password: passVal
+            });
+            if (error) {
+              showAuthAlert(error.message, "error");
+            } else {
+              showToast("Signed in successfully", "success");
+            }
+          } else {
+            const fullName = emailVal.split("@")[0];
+            const capitalized = fullName.charAt(0).toUpperCase() + fullName.slice(1);
+            const demoUser = {
+              id: `demo-user-${Date.now()}`,
+              email: emailVal,
+              user_metadata: { full_name: capitalized }
+            };
+            const demoSession = { user: demoUser, access_token: 'demo-token' };
+            localStorage.setItem('keepr_auth_session', JSON.stringify(demoSession));
+            handleSessionState(demoSession);
+            showToast(`Welcome back, ${capitalized}`, "success");
+          }
+        } else if (authMode === "signup") {
+          if (isSupabaseConfigured()) {
+            const { data, error } = await supabase.auth.signUp({
+              email: emailVal,
+              password: passVal,
+              options: {
+                data: { full_name: nameVal }
+              }
+            });
+            if (error) {
+              showAuthAlert(error.message, "error");
+            } else {
+              if (data?.user && !data?.session) {
+                showAuthAlert("Account created! Check your email to confirm your account.", "success");
+              } else {
+                showToast("Account created successfully", "success");
+              }
+            }
+          } else {
+            const fullName = nameVal || emailVal.split("@")[0];
+            const demoUser = {
+              id: `demo-user-${Date.now()}`,
+              email: emailVal,
+              user_metadata: { full_name: fullName }
+            };
+            const demoSession = { user: demoUser, access_token: 'demo-token' };
+            localStorage.setItem('keepr_auth_session', JSON.stringify(demoSession));
+            handleSessionState(demoSession);
+            showToast(`Account created! Welcome, ${fullName}`, "success");
+          }
+        } else if (authMode === "forgot") {
+          if (isSupabaseConfigured()) {
+            const { error } = await supabase.auth.resetPasswordForEmail(emailVal, {
+              redirectTo: window.location.origin
+            });
+            if (error) {
+              showAuthAlert(error.message, "error");
+            } else {
+              showAuthAlert("Password reset instructions sent to your email.", "success");
+            }
+          } else {
+            showAuthAlert(`Password reset link sent to ${emailVal}`, "success");
+          }
+        }
+      } catch (err) {
+        showAuthAlert(err.message || "An unexpected error occurred", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  // Sign Out Handler
+  const signOutBtn = document.getElementById("btn-signout");
+  if (signOutBtn) {
+    const newSignOutBtn = signOutBtn.cloneNode(true);
+    signOutBtn.parentNode.replaceChild(newSignOutBtn, signOutBtn);
+    newSignOutBtn.addEventListener("click", async () => {
+      if (isSupabaseConfigured()) {
+        await supabase.auth.signOut();
+      }
+      localStorage.removeItem("keepr_auth_session");
+      handleSessionState(null);
+      showToast("Signed out successfully", "info");
+    });
+  }
+}
+
+function showAuthAlert(msg, type = "error") {
+  const alertEl = document.getElementById("auth-alert");
+  if (!alertEl) return;
+  alertEl.className = `auth-alert ${type}`;
+  alertEl.textContent = msg;
+  alertEl.style.display = "block";
+}
+
+function showAuthAlertHTML(htmlContent, type = "info") {
+  const alertEl = document.getElementById("auth-alert");
+  if (!alertEl) return;
+  alertEl.className = `auth-alert ${type}`;
+  alertEl.innerHTML = htmlContent;
+  alertEl.style.display = "block";
+}
+
+function hideAuthAlert() {
+  const alertEl = document.getElementById("auth-alert");
+  if (alertEl) alertEl.style.display = "none";
 }
 
 /* -------------------------------------------------------------
