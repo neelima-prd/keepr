@@ -1,0 +1,6 @@
+{
+  "name": "Keepr",
+  "description": "Smart notes, tasks, and bookmark manager application.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

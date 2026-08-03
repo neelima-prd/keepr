@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" data-density="comfortable">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>keepr. — your second memory</title>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo">
+        <i data-lucide="bookmark" class="logo-icon"></i>
+        <span>keepr.</span>
+      </div>
+    </div>
+    
+    <nav class="header-nav">
+      <button class="nav-tab active" data-tab="home" id="nav-home">
+        <i data-lucide="home"></i>
+        <span>Home</span>
+      </button>
+      <button class="nav-tab" data-tab="search" id="nav-search">
+        <i data-lucide="search"></i>
+        <span>Search</span>
+      </button>
+      <button class="nav-tab" data-tab="settings" id="nav-settings">
+        <i data-lucide="sliders"></i>
+        <span>Settings</span>
+      </button>
+    </nav>
+    
+    <div class="header-right">
+      <div class="profile-avatar">
+        <span class="avatar-letter">N</span>
+        <span class="profile-name">Neelima</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Views Container -->
+  <main class="app-container">
+    
+    <!-- HOME VIEW -->
+    <section id="view-home" class="view-panel active">
+      <div class="hero-section">
+        <h1 class="hero-title">What's worth remembering today?</h1>
+        <p class="hero-subtitle" id="dynamic-greeting">Good afternoon, Neelima 👋</p>
+      </div>
+
+      <!-- Quick Search triggers search view -->
+      <div class="quick-search-trigger" id="quick-search-box">
+        <i data-lucide="search" class="search-icon"></i>
+        <span class="placeholder-text">Search your second memory...</span>
+        <span class="keyboard-hint"><kbd>⌘</kbd><kbd>K</kbd></span>
+      </div>
+
+      <!-- Welcoming Empty State for First-Time Users -->
+      <div class="welcome-empty-card" id="home-welcome-empty-state" style="display: none;">
+        <div class="welcome-illustration-wrap">
+          <div class="welcome-icon-glow"></div>
+          <div class="welcome-icon-badge">
+            <i data-lucide="bookmark" class="welcome-main-icon"></i>
+          </div>
+        </div>
+        
+        <h2 class="welcome-title">Nothing kept yet.</h2>
+        
+        <div class="welcome-description">
+          <p class="welcome-tagline">Capture anything. Find everything.</p>
+          <p class="welcome-subtext">Paste a link, drop a screenshot, upload a PDF, or write your first note.</p>
+        </div>
+
+        <div class="welcome-actions">
+          <button type="button" class="btn btn-primary welcome-cta-btn" id="welcome-keep-btn">
+            <i data-lucide="plus"></i>
+            <span>Keep your first memory</span>
+          </button>
+        </div>
+
+        <div class="welcome-features-row">
+          <button type="button" class="welcome-feature-chip" data-quick-action="link">
+            <i data-lucide="link"></i>
+            <span>Links</span>
+          </button>
+          <button type="button" class="welcome-feature-chip" data-quick-action="image">
+            <i data-lucide="image"></i>
+            <span>Screenshots</span>
+          </button>
+          <button type="button" class="welcome-feature-chip" data-quick-action="pdf">
+            <i data-lucide="file-digit"></i>
+            <span>PDFs</span>
+          </button>
+          <button type="button" class="welcome-feature-chip" data-quick-action="note">
+            <i data-lucide="file-text"></i>
+            <span>Notes</span>
+          </button>
+          <button type="button" class="welcome-feature-chip" data-quick-action="quote">
+            <i data-lucide="quote"></i>
+            <span>Quotes</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Recently Kept -->
+      <div class="section-container" id="home-recent-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Recently Kept</h2>
+            <p class="section-subtitle">The last few things you tucked away</p>
+          </div>
+          <button class="view-all-link" id="home-view-all">
+            <span>View all</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
+        </div>
+        
+        <div class="items-grid" id="recent-items-grid">
+          <!-- Dynamically populated via JS -->
+        </div>
+      </div>
+
+      <!-- Suggested Tags -->
+      <div class="section-container" id="home-tags-section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Suggested Tags</h2>
+            <p class="section-subtitle">Themes that keep showing up</p>
+          </div>
+        </div>
+        <div class="tags-cloud" id="suggested-tags-cloud">
+          <!-- Dynamically populated via JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- SEARCH VIEW -->
+    <section id="view-search" class="view-panel">
+      <div class="search-header-section">
+        <span class="sub-label">Search</span>
+        <h1 class="view-title">Find anything you've kept</h1>
+      </div>
+
+      <!-- Main Search Bar -->
+      <div class="search-input-wrapper">
+        <i data-lucide="search" class="search-icon"></i>
+        <input type="text" id="search-input" placeholder="Try a word, a source, or a feeling..." autocomplete="off">
+        <button class="clear-search-btn" id="clear-search" style="display: none;">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <!-- Filters Row -->
+      <div class="filters-container">
+        <div class="filters-scroll">
+          <!-- Content Type Filters -->
+          <div class="filter-group">
+            <button class="chip-filter active" data-filter-type="all">Everything</button>
+            <button class="chip-filter" data-filter-type="link">Links</button>
+            <button class="chip-filter" data-filter-type="note">Notes</button>
+            <button class="chip-filter" data-filter-type="image">Screenshots</button>
+            <button class="chip-filter" data-filter-type="pdf">PDFs</button>
+            <button class="chip-filter" data-filter-type="quote">Quotes</button>
+          </div>
+          <div class="divider"></div>
+          <!-- Dynamic Tag Filters -->
+          <div class="filter-group" id="search-tag-chips">
+            <!-- Dynamically populated via JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Results Count -->
+      <div class="results-meta">
+        <span class="results-count" id="results-count-text">0 results</span>
+      </div>
+
+      <!-- Search Results Grid -->
+      <div class="items-grid" id="search-results-grid">
+        <!-- Dynamically populated via JS -->
+      </div>
+
+      <!-- Empty State -->
+      <div class="empty-state" id="search-empty-state" style="display: none;">
+        <div class="empty-icon-wrap">
+          <i data-lucide="inbox"></i>
+        </div>
+        <h3 class="empty-title">Couldn't find it this time.</h3>
+        <p class="empty-description">Try a different search term or remove some filter chips.</p>
+        <button class="btn btn-secondary" id="empty-clear-filters">Clear all filters</button>
+      </div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="view-settings" class="view-panel">
+      <div class="settings-header-section">
+        <span class="sub-label">Settings</span>
+        <h1 class="view-title">Quiet controls</h1>
+      </div>
+
+      <!-- Profile & Stats Card -->
+      <div class="settings-profile-card">
+        <div class="profile-info-section">
+          <div class="profile-main">
+            <div class="avatar-large">N</div>
+            <div class="profile-details">
+              <h3>Neelima Rao</h3>
+              <p>neelima@keepr.app</p>
+            </div>
+          </div>
+          <button class="btn btn-tertiary">Edit</button>
+        </div>
+        
+        <div class="profile-stats-grid">
+          <div class="stat-box">
+            <span class="stat-label">Kept</span>
+            <span class="stat-value" id="stats-kept-count">12</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Tags</span>
+            <span class="stat-value" id="stats-tags-count">8</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Member Since</span>
+            <span class="stat-value">March 2025</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings List -->
+      <div class="settings-options-list">
+        
+        <!-- Appearance Category -->
+        <div class="settings-category">
+          <h2 class="category-title">Appearance</h2>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Theme</span>
+              <p class="setting-desc">A warm off-white by day, or a calm dark by night.</p>
+            </div>
+            <div class="setting-control">
+              <div class="theme-switcher">
+                <i data-lucide="sun" class="theme-icon"></i>
+                <label class="switch">
+                  <input type="checkbox" id="theme-toggle-switch">
+                  <span class="slider round"></span>
+                </label>
+                <i data-lucide="moon" class="theme-icon"></i>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Density</span>
+              <p class="setting-desc">Comfortable spacing. Compact mode is on the roadmap.</p>
+            </div>
+            <div class="setting-control">
+              <div class="density-switcher">
+                <button class="density-btn active" data-density="comfortable">Comfortable</button>
+                <button class="density-btn" data-density="compact">Compact</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Your Data Category -->
+        <div class="settings-category">
+          <h2 class="category-title">Your Data</h2>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Export everything</span>
+              <p class="setting-desc">A quiet, portable archive of every artifact.</p>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-secondary" id="btn-export">
+                <i data-lucide="download"></i>
+                <span>Export</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Reset database</span>
+              <p class="setting-desc">Restore the default set of high-fidelity memories.</p>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-secondary" id="btn-reset-db">
+                <i data-lucide="refresh-cw"></i>
+                <span>Reset Sample Data</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Clear workspace</span>
+              <p class="setting-desc">Remove all saved artifacts to start with a pristine empty slate.</p>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-danger-outline" id="btn-clear-db">
+                <i data-lucide="trash-2"></i>
+                <span>Clear All</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Category -->
+        <div class="settings-category">
+          <h2 class="category-title">Account</h2>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Sign out</span>
+              <p class="setting-desc">You'll need to sign in again on your next visit.</p>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-danger-text" id="btn-signout">
+                <i data-lucide="log-out"></i>
+                <span>Sign out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="settings-footer">
+        <p>keepr · v0.2 · for people who save more than they can remember</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Persistent Floating "+ Keep" Button -->
+  <button class="floating-keep-btn" id="btn-open-keep">
+    <i data-lucide="plus"></i>
+    <span>Keep</span>
+  </button>
+
+  <!-- KEEP MODAL -->
+  <div class="modal-backdrop" id="keep-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">Keep Something</h2>
+        <button class="modal-close-btn" id="btn-close-keep">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      
+      <form id="keep-form">
+        <!-- Single capture surface -->
+        <div class="form-field capture-field">
+          <div class="capture-toolbar" id="capture-toolbar">
+            <button type="button" class="toolbar-btn" data-command="bold" title="Bold"><i data-lucide="bold"></i></button>
+            <button type="button" class="toolbar-btn" data-command="italic" title="Italic"><i data-lucide="italic"></i></button>
+            <button type="button" class="toolbar-btn" data-command="insertUnorderedList" title="Bullet list"><i data-lucide="list"></i></button>
+            <button type="button" class="toolbar-btn" data-command="insertOrderedList" title="Numbered list"><i data-lucide="list-ordered"></i></button>
+            <button type="button" class="toolbar-btn" data-command="checklist" title="Checklist"><i data-lucide="list-checks"></i></button>
+            <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="blockquote" title="Quote"><i data-lucide="quote"></i></button>
+            <button type="button" class="toolbar-btn" data-command="createLink" title="Link"><i data-lucide="link"></i></button>
+          </div>
+          <div
+            id="keep-capture-editor"
+            class="capture-editor"
+            contenteditable="true"
+            role="textbox"
+            aria-multiline="true"
+            data-placeholder="What's worth remembering?"
+          ></div>
+          <p class="capture-helper-text">Paste links, type notes or drag screenshots, PDFs and documents here.</p>
+          <input type="file" id="keep-file" accept="image/*,application/pdf,.doc,.docx,.txt" multiple style="display: none;">
+          <div class="capture-previews" id="capture-previews"></div>
+        </div>
+
+        <!-- Suggested Tags list -->
+        <div class="form-field tags-field">
+          <label class="field-label">Tags</label>
+          <div class="tags-selector" id="keep-tags-selector">
+            <!-- Dynamically populated via JS -->
+          </div>
+          <div class="tag-input-wrapper">
+            <input type="text" id="new-tag-input" placeholder="Add custom tag... (press Enter)">
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="modal-footer-actions">
+          <span class="modal-status" id="modal-status-text">No tags — that's ok</span>
+          <div class="footer-buttons">
+            <button class="btn btn-tertiary" type="button" id="btn-cancel-keep">Cancel</button>
+            <button class="btn btn-primary" type="submit" id="btn-submit-keep">Keep it</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- DETAIL DRAWER -->
+  <div class="drawer-backdrop" id="detail-drawer">
+    <div class="drawer-panel">
+      <div class="drawer-header">
+        <div class="drawer-header-left">
+          <span class="badge" id="detail-badge-type">Link</span>
+          <span class="drawer-date" id="detail-date">3 days ago</span>
+        </div>
+        <button class="drawer-close-btn" id="btn-close-detail">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <div class="drawer-body">
+        <!-- Rich Preview Section -->
+        <div class="detail-preview-box" id="detail-preview-container">
+          <!-- Dynamically populated rich preview -->
+        </div>
+
+        <form id="edit-form">
+          <!-- Note/Memo Section -->
+          <div class="drawer-section">
+            <label class="section-label">Note</label>
+            <div class="capture-toolbar detail-toolbar" id="detail-toolbar">
+              <button type="button" class="toolbar-btn" data-command="bold" title="Bold"><i data-lucide="bold"></i></button>
+              <button type="button" class="toolbar-btn" data-command="italic" title="Italic"><i data-lucide="italic"></i></button>
+              <button type="button" class="toolbar-btn" data-command="insertUnorderedList" title="Bullet list"><i data-lucide="list"></i></button>
+              <button type="button" class="toolbar-btn" data-command="insertOrderedList" title="Numbered list"><i data-lucide="list-ordered"></i></button>
+              <button type="button" class="toolbar-btn" data-command="checklist" title="Checklist"><i data-lucide="list-checks"></i></button>
+              <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="blockquote" title="Quote"><i data-lucide="quote"></i></button>
+              <button type="button" class="toolbar-btn" data-command="createLink" title="Link"><i data-lucide="link"></i></button>
+            </div>
+            <div id="detail-note" class="rich-editor drawer-note-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Write a note..."></div>
+          </div>
+
+          <!-- Link Section -->
+          <div class="drawer-section" id="detail-url-section">
+            <label class="section-label">Source URL</label>
+            <div class="url-input-wrapper">
+              <i data-lucide="link"></i>
+              <input type="url" id="detail-url" placeholder="https://example.com">
+              <a href="#" id="detail-visit-link" target="_blank" class="visit-link-btn" title="Open source URL">
+                <i data-lucide="external-link"></i>
+              </a>
+            </div>
+          </div>
+
+          <!-- Tags Section -->
+          <div class="drawer-section">
+            <label class="section-label">Tags</label>
+            <div class="tags-editor-wrapper">
+              <div class="tags-cloud inline" id="detail-tags-cloud">
+                <!-- Dynamically populated tags -->
+              </div>
+              <div class="inline-tag-input-wrap">
+                <input type="text" id="detail-new-tag" placeholder="+ Tag (press Enter)">
+              </div>
+            </div>
+          </div>
+
+          <!-- Metadata Section -->
+          <div class="drawer-section metadata-section">
+            <div class="meta-row">
+              <span class="meta-label">Saved on</span>
+              <span class="meta-value" id="detail-meta-saved-date">July 30, 2026</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Last edited</span>
+              <span class="meta-value" id="detail-meta-edited-date">July 30, 2026</span>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="drawer-footer">
+        <button class="btn btn-danger-outline" id="btn-delete-detail">
+          <i data-lucide="trash-2"></i>
+          <span>Delete</span>
+        </button>
+        <div class="drawer-footer-right">
+          <button class="btn btn-tertiary" id="btn-cancel-detail">Cancel</button>
+          <button class="btn btn-primary" id="btn-save-detail">Save changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- JS Logic -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
