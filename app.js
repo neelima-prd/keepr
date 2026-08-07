@@ -149,6 +149,12 @@ function navigateToTab(tabName) {
 
   currentTab = tabName;
   
+  if (window.location.hash !== `#${tabName}`) {
+    window.location.hash = `#${tabName}`;
+  }
+
+  closeAllOverlayDrawers();
+  
   // Update header tab active status
   document.querySelectorAll(".nav-tab").forEach(tab => {
     if (tab.getAttribute("data-tab") === tabName) {
@@ -173,7 +179,8 @@ function navigateToTab(tabName) {
   // Custom behavior per tab
   if (tabName === "search") {
     setTimeout(() => {
-      document.getElementById("search-input").focus();
+      const searchInput = document.getElementById("search-input");
+      if (searchInput) searchInput.focus();
     }, 150);
   }
 }
@@ -653,6 +660,7 @@ function setupProfileDropdown() {
     settingsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       closeDropdown();
+      window.location.hash = "#settings";
       navigateToTab("settings");
     });
   }
@@ -1315,21 +1323,7 @@ function registerEventListeners() {
   if (headerLogo) {
     headerLogo.addEventListener("click", () => {
       window.location.hash = "#home";
-    });
-  }
-
-  // Back to Home buttons in Search and Settings
-  const searchBackHomeBtn = document.getElementById("btn-search-back-home");
-  if (searchBackHomeBtn) {
-    searchBackHomeBtn.addEventListener("click", () => {
-      window.location.hash = "#home";
-    });
-  }
-
-  const settingsBackHomeBtn = document.getElementById("btn-settings-back-home");
-  if (settingsBackHomeBtn) {
-    settingsBackHomeBtn.addEventListener("click", () => {
-      window.location.hash = "#home";
+      navigateToTab("home");
     });
   }
 
@@ -1337,19 +1331,28 @@ function registerEventListeners() {
   document.querySelectorAll(".nav-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       const tabName = tab.getAttribute("data-tab");
-      window.location.hash = tabName;
+      window.location.hash = `#${tabName}`;
+      navigateToTab(tabName);
     });
   });
 
   // Home: Quick search box trigger
-  document.getElementById("quick-search-box").addEventListener("click", () => {
-    window.location.hash = "#search";
-  });
+  const quickSearchBox = document.getElementById("quick-search-box");
+  if (quickSearchBox) {
+    quickSearchBox.addEventListener("click", () => {
+      window.location.hash = "#search";
+      navigateToTab("search");
+    });
+  }
 
   // Home: View all link
-  document.getElementById("home-view-all").addEventListener("click", () => {
-    window.location.hash = "#search";
-  });
+  const homeViewAll = document.getElementById("home-view-all");
+  if (homeViewAll) {
+    homeViewAll.addEventListener("click", () => {
+      window.location.hash = "#search";
+      navigateToTab("search");
+    });
+  }
 
   // Search View Input
   const searchInput = document.getElementById("search-input");
