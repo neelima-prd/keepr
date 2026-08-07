@@ -13,6 +13,7 @@ let activeTagFilters = [];
 let searchQuery = "";
 let captureFiles = [];
 let currentDetailItem = null;
+let detailOriginTab = "home";
 
 // Auth State
 let currentUser = null;
@@ -2278,6 +2279,7 @@ async function handleKeepItemSubmit(e) {
  * Detail Drawer Interactions & Actions
  * ------------------------------------------------------------- */
 function openDetailDrawer(item) {
+  detailOriginTab = currentTab || "home";
   currentDetailItem = { ...item }; // Clone item state
   
   const drawer = document.getElementById("detail-drawer");
@@ -2327,8 +2329,13 @@ function openDetailDrawer(item) {
 }
 
 function closeDetailDrawer() {
-  document.getElementById("detail-drawer").classList.remove("active");
+  const drawer = document.getElementById("detail-drawer");
+  if (drawer) drawer.classList.remove("active");
   currentDetailItem = null;
+  if (currentUser && detailOriginTab && currentTab !== detailOriginTab) {
+    window.location.hash = `#${detailOriginTab}`;
+    navigateToTab(detailOriginTab);
+  }
 }
 
 function renderDetailTags() {
