@@ -24,7 +24,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadDatabase();
   await initAuth();
   initRouter();
-  initThemeAndDensity();
+  initTheme();
+  initEmojiPicker();
   registerEventListeners();
   renderAll();
   lucide.createIcons();
@@ -53,12 +54,74 @@ async function resetDatabase() {
 /* -------------------------------------------------------------
  * Routing & Protected Routes
  * ------------------------------------------------------------- */
+function closeAllOverlayDrawers() {
+  const emojiPopover = document.getElementById("emoji-picker-popover");
+  if (emojiPopover) emojiPopover.style.display = "none";
+
+  const profileDropdown = document.getElementById("profile-dropdown-menu");
+  if (profileDropdown) profileDropdown.style.display = "none";
+
+  const confirmModal = document.getElementById("confirm-dialog-modal");
+  if (confirmModal) confirmModal.classList.remove("active");
+
+  const keepModal = document.getElementById("keep-modal");
+  if (keepModal && keepModal.classList.contains("active")) {
+    keepModal.classList.remove("active");
+    selectedModalTags = [];
+    captureFiles = [];
+    const editor = document.getElementById("keep-capture-editor");
+    if (editor) editor.innerHTML = "";
+    const form = document.getElementById("keep-form");
+    if (form) form.reset();
+    const previews = document.getElementById("capture-previews");
+    if (previews) previews.innerHTML = "";
+    clearModalStatusError();
+  }
+
+  const detailDrawer = document.getElementById("detail-drawer");
+  if (detailDrawer && detailDrawer.classList.contains("active")) {
+    detailDrawer.classList.remove("active");
+    currentDetailItem = null;
+  }
+}
+
+function handlePopState(e) {
+  const detailDrawer = document.getElementById("detail-drawer");
+  const keepModal = document.getElementById("keep-modal");
+  const confirmModal = document.getElementById("confirm-dialog-modal");
+
+  if (confirmModal && confirmModal.classList.contains("active")) {
+    closeConfirmDialog();
+    return;
+  }
+  if (keepModal && keepModal.classList.contains("active")) {
+    keepModal.classList.remove("active");
+    selectedModalTags = [];
+    captureFiles = [];
+    const editor = document.getElementById("keep-capture-editor");
+    if (editor) editor.innerHTML = "";
+    const form = document.getElementById("keep-form");
+    if (form) form.reset();
+    const previews = document.getElementById("capture-previews");
+    if (previews) previews.innerHTML = "";
+    clearModalStatusError();
+    return;
+  }
+  if (detailDrawer && detailDrawer.classList.contains("active")) {
+    detailDrawer.classList.remove("active");
+    currentDetailItem = null;
+    return;
+  }
+}
+
 function initRouter() {
   const handleHash = () => {
     if (!currentUser) {
       showAuthView();
       return;
     }
+
+    closeAllOverlayDrawers();
 
     const hash = window.location.hash || "#home";
     const tabName = hash.substring(1);
@@ -73,6 +136,7 @@ function initRouter() {
   };
 
   window.addEventListener("hashchange", handleHash);
+  window.addEventListener("popstate", handlePopState);
   handleHash(); // Run on load
 }
 
@@ -163,6 +227,14 @@ async function handleSessionState(session) {
   const floatingKeepBtn = document.getElementById("btn-open-keep");
 
   if (currentUser) {
+    if (currentUser.id) {
+      const pendingName = localStorage.getItem('keepr_user_pending_name');
+      if (pendingName) {
+        localStorage.setItem(`keepr_user_name_${currentUser.id}`, pendingName);
+        localStorage.removeItem('keepr_user_pending_name');
+      }
+    }
+
     // Authenticated user
     if (headerEl) headerEl.style.display = "";
     if (floatingKeepBtn) floatingKeepBtn.style.display = "";
@@ -201,13 +273,55 @@ function showAuthView() {
   });
 }
 
+function getFormattedFirstName(user) {
+  if (!user) return "there";
+
+  if (user.id) {
+    const savedName = localStorage.getItem(`keepr_user_name_${user.id}`);
+    if (savedName && savedName.trim()) {
+      const parts = savedName.trim().split(" ");
+      return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+    }
+  }
+
+  let fullName = user.user_metadata?.full_name 
+    || user.user_metadata?.name 
+    || user.user_metadata?.first_name
+    || user.user_metadata?.display_name
+    || user.raw_user_meta_data?.full_name
+    || user.raw_user_meta_data?.name;
+
+  if (!fullName && user.email) {
+    const prefix = user.email.split("@")[0];
+    const cleaned = prefix.replace(/\d+$/, "");
+    fullName = cleaned || prefix;
+  }
+  if (!fullName) return "there";
+
+  let firstName = fullName.trim().split(" ")[0] || fullName;
+  firstName = firstName.replace(/\d+$/, "");
+  if (!firstName) return "there";
+
+  return firstName.charAt(0).toUpperCase() + firstName.slice(1);
+}
+
 function renderUserProfile(user) {
   if (!user) return;
-  const email = user.email || "user@keepr.app";
-  const fullName = user.user_metadata?.full_name || user.user_metadata?.name || email.split("@")[0];
-  const firstName = fullName.split(" ")[0] || fullName;
+  const email = user.email || "";
+  const firstName = getFormattedFirstName(user);
+
+  let fullName = (user.id && localStorage.getItem(`keepr_user_name_${user.id}`))
+    || user.user_metadata?.full_name 
+    || user.user_metadata?.name 
+    || user.raw_user_meta_data?.full_name
+    || (firstName !== "there" ? firstName : "User");
+
+  if (fullName && fullName !== "User") {
+    fullName = fullName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  }
+
   const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture || null;
-  const initial = fullName ? fullName.charAt(0).toUpperCase() : "K";
+  const initial = firstName && firstName !== "there" ? firstName.charAt(0).toUpperCase() : (fullName ? fullName.charAt(0).toUpperCase() : "U");
 
   // Header profile
   const headerAvatar = document.getElementById("header-profile-avatar");
@@ -218,22 +332,26 @@ function renderUserProfile(user) {
       headerAvatar.innerHTML = `
         <img src="${escapeHtml(avatarUrl)}" class="avatar-img" alt="${escapeHtml(fullName)}">
         <span class="profile-name" id="header-profile-name">${escapeHtml(firstName)}</span>
+        <i data-lucide="chevron-down" class="avatar-chevron"></i>
       `;
     } else {
       headerAvatar.innerHTML = `
         <span class="avatar-letter" id="header-avatar-letter">${escapeHtml(initial)}</span>
         <span class="profile-name" id="header-profile-name">${escapeHtml(firstName)}</span>
+        <i data-lucide="chevron-down" class="avatar-chevron"></i>
       `;
     }
+    if (window.lucide) window.lucide.createIcons();
   }
 
   // Settings profile card
   const settingsAvatar = document.getElementById("settings-avatar-large");
   const settingsName = document.getElementById("settings-profile-name");
   const settingsEmail = document.getElementById("settings-profile-email");
-  
+  const settingsMemberSince = document.getElementById("settings-member-since");
+
   if (settingsName) settingsName.textContent = fullName;
-  if (settingsEmail) settingsEmail.textContent = email;
+  if (settingsEmail) settingsEmail.textContent = email || "Signed in";
   if (settingsAvatar) {
     if (avatarUrl) {
       settingsAvatar.innerHTML = `<img src="${escapeHtml(avatarUrl)}" class="avatar-img-large" alt="${escapeHtml(fullName)}">`;
@@ -242,31 +360,37 @@ function renderUserProfile(user) {
     }
   }
 
-  // Home dynamic greeting
-  const greetingEl = document.getElementById("dynamic-greeting");
-  if (greetingEl) {
-    const hour = new Date().getHours();
-    let timeStr = "day";
-    if (hour < 12) timeStr = "morning";
-    else if (hour < 18) timeStr = "afternoon";
-    else timeStr = "evening";
-    greetingEl.textContent = `Good ${timeStr}, ${firstName} 👋`;
+  if (settingsMemberSince) {
+    let dateStr = "";
+    const createdAtRaw = user.created_at || user.user_metadata?.created_at;
+    if (createdAtRaw) {
+      const d = new Date(createdAtRaw);
+      if (!isNaN(d.getTime())) {
+        dateStr = d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      }
+    }
+    if (!dateStr) {
+      dateStr = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    }
+    settingsMemberSince.textContent = dateStr;
   }
+
+  renderHomeGreeting();
 }
 
 function loginAsDemoGoogleUser() {
   const demoUser = {
     id: 'demo-google-user',
-    email: 'james@keepr.app',
+    email: 'user@keepr.app',
     user_metadata: {
-      full_name: 'James Bond',
+      full_name: 'Demo User',
       avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80'
     }
   };
   const demoSession = { user: demoUser, access_token: 'demo-token' };
   localStorage.setItem('keepr_auth_session', JSON.stringify(demoSession));
   handleSessionState(demoSession);
-  showToast("Signed in as James Bond (Google)", "success");
+  showToast("Signed in as Demo User", "success");
 }
 
 function setupAuthUI() {
@@ -398,6 +522,9 @@ function setupAuthUI() {
             showToast(`Welcome back, ${capitalized}`, "success");
           }
         } else if (authMode === "signup") {
+          if (nameVal) {
+            localStorage.setItem('keepr_user_pending_name', nameVal);
+          }
           if (isSupabaseConfigured()) {
             const { data, error } = await supabase.auth.signUp({
               email: emailVal,
@@ -409,6 +536,11 @@ function setupAuthUI() {
             if (error) {
               showAuthAlert(error.message, "error");
             } else {
+              if (data?.user) {
+                if (nameVal) {
+                  localStorage.setItem(`keepr_user_name_${data.user.id}`, nameVal);
+                }
+              }
               if (data?.user && !data?.session) {
                 showAuthAlert("Account created! Check your email to confirm your account.", "success");
               } else {
@@ -422,6 +554,9 @@ function setupAuthUI() {
               email: emailVal,
               user_metadata: { full_name: fullName }
             };
+            if (fullName) {
+              localStorage.setItem(`keepr_user_name_${demoUser.id}`, fullName);
+            }
             const demoSession = { user: demoUser, access_token: 'demo-token' };
             localStorage.setItem('keepr_auth_session', JSON.stringify(demoSession));
             handleSessionState(demoSession);
@@ -454,13 +589,78 @@ function setupAuthUI() {
   if (signOutBtn) {
     const newSignOutBtn = signOutBtn.cloneNode(true);
     signOutBtn.parentNode.replaceChild(newSignOutBtn, signOutBtn);
-    newSignOutBtn.addEventListener("click", async () => {
-      if (isSupabaseConfigured()) {
-        await supabase.auth.signOut();
-      }
-      localStorage.removeItem("keepr_auth_session");
-      handleSessionState(null);
-      showToast("Signed out successfully", "info");
+    newSignOutBtn.addEventListener("click", () => handleSignOut());
+  }
+
+  setupProfileDropdown();
+}
+
+async function handleSignOut() {
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn("Signout error:", e);
+    }
+  }
+  localStorage.removeItem("keepr_auth_session");
+  handleSessionState(null);
+  showToast("Signed out successfully", "info");
+}
+
+function setupProfileDropdown() {
+  const avatarBtn = document.getElementById("header-profile-avatar");
+  const dropdownMenu = document.getElementById("profile-dropdown-menu");
+  const container = document.getElementById("header-profile-container");
+  const settingsBtn = document.getElementById("dropdown-btn-settings");
+  const signoutBtn = document.getElementById("dropdown-btn-signout");
+
+  if (!avatarBtn || !dropdownMenu) return;
+
+  function closeDropdown() {
+    if (dropdownMenu) dropdownMenu.style.display = "none";
+    if (container) container.classList.remove("open");
+    if (avatarBtn) avatarBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleDropdown(e) {
+    e.stopPropagation();
+    const isVisible = dropdownMenu.style.display !== "none";
+    if (isVisible) {
+      closeDropdown();
+    } else {
+      dropdownMenu.style.display = "flex";
+      if (container) container.classList.add("open");
+      avatarBtn.setAttribute("aria-expanded", "true");
+      if (window.lucide) window.lucide.createIcons();
+    }
+  }
+
+  // Remove existing listeners by cloning avatar button if needed
+  const newAvatarBtn = avatarBtn.cloneNode(true);
+  avatarBtn.parentNode.replaceChild(newAvatarBtn, avatarBtn);
+
+  newAvatarBtn.addEventListener("click", toggleDropdown);
+
+  document.addEventListener("click", (e) => {
+    if (container && !container.contains(e.target)) {
+      closeDropdown();
+    }
+  });
+
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeDropdown();
+      navigateToTab("settings");
+    });
+  }
+
+  if (signoutBtn) {
+    signoutBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeDropdown();
+      handleSignOut();
     });
   }
 }
@@ -487,27 +687,14 @@ function hideAuthAlert() {
 }
 
 /* -------------------------------------------------------------
- * Theme & Spacing Density Settings
+ * Theme Settings
  * ------------------------------------------------------------- */
-function initThemeAndDensity() {
-  // Theme
+function initTheme() {
   const storedTheme = localStorage.getItem("keepr_theme") || "light";
   document.documentElement.setAttribute("data-theme", storedTheme);
   
   const themeToggle = document.getElementById("theme-toggle-switch");
-  themeToggle.checked = (storedTheme === "dark");
-
-  // Density
-  const storedDensity = localStorage.getItem("keepr_density") || "comfortable";
-  document.documentElement.setAttribute("data-density", storedDensity);
-  
-  document.querySelectorAll(".density-btn").forEach(btn => {
-    if (btn.getAttribute("data-density") === storedDensity) {
-      btn.classList.add("active");
-    } else {
-      btn.classList.remove("active");
-    }
-  });
+  if (themeToggle) themeToggle.checked = (storedTheme === "dark");
 }
 
 function toggleTheme(e) {
@@ -518,27 +705,12 @@ function toggleTheme(e) {
   showToast(`Switched to ${theme} mode`, "info");
 }
 
-function setDensity(density) {
-  document.documentElement.setAttribute("data-density", density);
-  localStorage.setItem("keepr_density", density);
-  
-  document.querySelectorAll(".density-btn").forEach(btn => {
-    if (btn.getAttribute("data-density") === density) {
-      btn.classList.add("active");
-    } else {
-      btn.classList.remove("active");
-    }
-  });
-  showToast(`Density set to ${density}`, "info");
-}
-
 /* -------------------------------------------------------------
  * Rendering Logic
  * ------------------------------------------------------------- */
 function renderAll() {
   renderHomeGreeting();
   renderHomeRecentGrid();
-  renderHomeSuggestedTags();
   renderSearchFilters();
   renderSearchResultsGrid();
   renderSettingsStats();
@@ -547,20 +719,28 @@ function renderAll() {
 // 1. Home Greeting
 function renderHomeGreeting() {
   const greetingEl = document.getElementById("dynamic-greeting");
+  if (!greetingEl) return;
+
   const hours = new Date().getHours();
-  let greetingText = "Good afternoon, Neelima 👋";
-  
+  let timeOfDay = "afternoon";
+  let emoji = "👋";
+
   if (hours >= 5 && hours < 12) {
-    greetingText = "Good morning, Neelima 🌅";
+    timeOfDay = "morning";
+    emoji = "🌅";
   } else if (hours >= 12 && hours < 17) {
-    greetingText = "Good afternoon, Neelima 👋";
+    timeOfDay = "afternoon";
+    emoji = "👋";
   } else if (hours >= 17 && hours < 21) {
-    greetingText = "Good evening, Neelima 🌙";
+    timeOfDay = "evening";
+    emoji = "🌙";
   } else {
-    greetingText = "Good night, Neelima ✨";
+    timeOfDay = "night";
+    emoji = "✨";
   }
-  
-  greetingEl.innerHTML = greetingText;
+
+  const name = getFormattedFirstName(currentUser);
+  greetingEl.textContent = `Good ${timeOfDay}, ${name} ${emoji}`;
 }
 
 // Helper to format relative time
@@ -736,42 +916,120 @@ function getTypeIcon(type) {
   }
 }
 
+// Helper: Determine automatic subtle card accent color class based on artifact type
+function getCardAccentClass(item) {
+  switch (item.type) {
+    case "note":
+      return "card-accent-note";
+    case "pdf":
+    case "file":
+      return "card-accent-pdf";
+    case "image":
+      return "card-accent-image";
+    case "link":
+      return "card-accent-link";
+    case "quote":
+      return "card-accent-quote";
+    default:
+      return "card-accent-note";
+  }
+}
+
+function extractNoteTitleAndPreview(item) {
+  const content = item.content || "";
+  const textWithNewlines = content
+    .replace(/<\/(p|div|li|h1|h2|h3|h4|h5|h6)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n");
+  const plainText = stripHtml(textWithNewlines);
+  const lines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+  let title = "";
+  let preview = "";
+
+  if (lines.length > 0) {
+    title = lines[0]; // Treat ONLY the first non-empty line as the title
+    if (lines.length > 1) {
+      preview = lines.slice(1).join(" "); // Everything after the first newline becomes the preview
+    } else {
+      preview = ""; // If only one line exists: No duplicate preview
+    }
+  } else {
+    title = item.title && item.title.trim() ? item.title.trim() : "Untitled note";
+    preview = "";
+  }
+
+  return { title, preview };
+}
+
+function getArtifactTitle(item) {
+  if (item.type === "note") {
+    return extractNoteTitleAndPreview(item).title;
+  }
+  if (item.title && item.title.trim()) {
+    return item.title.trim();
+  }
+  switch (item.type) {
+    case "quote":
+      return "Saved quote";
+    case "link":
+      return "Saved link";
+    case "image":
+      return item.fileName ? item.fileName : "Image";
+    case "pdf":
+    case "file":
+      return item.fileName ? item.fileName : "PDF document";
+    default:
+      return "Untitled note";
+  }
+}
+
 // Helper: Generate Card HTML
 function createCardElement(item) {
   const card = document.createElement("div");
-  card.className = `kept-card card-${item.type}`;
+  const accentClass = getCardAccentClass(item);
+  card.className = `kept-card card-${item.type} ${accentClass}`;
   card.setAttribute("data-id", item.id);
   
-  // Custom headers / preview areas based on type
+  const title = getArtifactTitle(item);
+  const iconName = getTypeIcon(item.type);
+  const typeLabel = item.type.toUpperCase();
+  const relativeTime = formatRelativeTime(item.createdAt);
+  const primaryTag = item.tags && item.tags.length > 0 ? item.tags[0] : "";
+
   let customBodyHtml = "";
-  
+
   if (item.type === "link") {
+    let domainText = item.domain || "";
+    if (!domainText && item.url) {
+      try {
+        domainText = new URL(item.url).hostname.replace("www.", "");
+      } catch (e) {
+        domainText = "Saved link";
+      }
+    }
     customBodyHtml = `
       <div class="card-link-info">
         <div class="favicon-box">
-          <img src="https://www.google.com/s2/favicons?sz=64&domain=${item.domain || 'example.com'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23666%22 stroke-width=%222%22><circle cx=%2212%22 cy=%2212%22 r=%2210%22/></svg>'">
+          <img src="https://www.google.com/s2/favicons?sz=64&domain=${domainText || 'example.com'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23666%22 stroke-width=%222%22><circle cx=%2212%22 cy=%2212%22 r=%2210%22/></svg>'">
         </div>
         <div class="link-meta-text">
-          <span class="link-domain">${item.domain || 'Link Source'}</span>
-          <span class="link-type">web link</span>
+          <span class="link-domain">${escapeHtml(domainText || 'Saved link')}</span>
         </div>
       </div>
-      <h3 class="card-title">${item.title}</h3>
-      <p class="card-snippet">${stripHtml(item.content)}</p>
+      <h3 class="card-title">${escapeHtml(title)}</h3>
     `;
   } else if (item.type === "quote") {
     customBodyHtml = `
-      <div class="quote-content">"${stripHtml(item.content)}"</div>
-      <span class="quote-author">— ${item.author || 'Unknown'}</span>
+      <h3 class="card-title">${escapeHtml(title)}</h3>
+      ${item.content ? `<div class="quote-content">"${stripHtml(item.content)}"</div>` : ''}
+      ${item.author ? `<span class="quote-author">— ${escapeHtml(item.author)}</span>` : ''}
     `;
   } else if (item.type === "image") {
-    // If we have local imageUrl or base64 or Supabase signed URL
     const imgUrl = item.imageUrl || item.url || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
     customBodyHtml = `
       <div class="card-image-preview" style="background-image: url('${imgUrl}');"></div>
       <div class="card-content-wrap">
-        <h3 class="card-title">${item.title}</h3>
-        <p class="card-snippet">${stripHtml(item.content)}</p>
+        <h3 class="card-title">${escapeHtml(title)}</h3>
       </div>
     `;
   } else if (item.type === "pdf" || item.type === "file") {
@@ -779,61 +1037,55 @@ function createCardElement(item) {
     customBodyHtml = `
       <div class="pdf-preview-box">
         <div class="pdf-mock-page"></div>
-        <div class="pdf-mock-page"></div>
         <div class="pdf-mock-page">${docLabel}</div>
       </div>
-      <h3 class="card-title">${item.title}</h3>
-      <p class="card-snippet">${stripHtml(item.content)}</p>
+      <h3 class="card-title">${escapeHtml(title)}</h3>
     `;
   } else {
     // Note or general content
+    const { title: noteTitle, preview: notePreview } = extractNoteTitleAndPreview(item);
     customBodyHtml = `
-      <h3 class="card-title">${item.title}</h3>
-      <p class="card-snippet">${stripHtml(item.content)}</p>
+      <h3 class="card-title">${escapeHtml(noteTitle)}</h3>
+      ${notePreview ? `<p class="card-snippet">${escapeHtml(notePreview)}</p>` : ''}
     `;
   }
 
-  // Set card contents
-  const typeLabel = item.type.toUpperCase();
-  const iconName = getTypeIcon(item.type);
-  const relativeTime = formatRelativeTime(item.createdAt);
-  const primaryTag = item.tags && item.tags.length > 0 ? item.tags[0] : "";
-  
-  // Base skeleton template
+  // Base skeleton template (NO implementation labels: manual, upload, web link)
   if (item.type === "image") {
     card.innerHTML = `
-      <div class="card-header" style="position: absolute; top: 12px; left: 16px; right: 16px; z-index: 5; pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.15);">
-        <span class="badge" style="background: rgba(255,255,255,0.9); backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.06); color: #222;">
-          <i data-lucide="${iconName}" style="width: 12px; height: 12px;"></i>
+      <div class="card-header" style="position: absolute; top: 12px; left: 16px; right: 16px; z-index: 5; pointer-events: none;">
+        <span class="card-type-badge" style="background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.06); color: #222; padding: 3px 8px; border-radius: 9999px;">
+          <i data-lucide="${iconName}" class="card-type-icon"></i>
           <span>${typeLabel}</span>
         </span>
-        <span class="card-date" style="background: rgba(255,255,255,0.9); backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.06); color: #222; padding: 2px 8px; border-radius: 9999px;">${relativeTime}</span>
+        <span class="card-date" style="background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.06); color: #222; padding: 3px 8px; border-radius: 9999px;">${relativeTime}</span>
       </div>
       ${customBodyHtml}
-      <!-- Wrap image card footer -->
-      <div style="padding: 0 16px 16px 16px; width: 100%; border-top: 1px solid var(--color-border); margin-top: 0;">
-        <div class="card-meta" style="margin-top: 8px; padding-top: 0; border-top: none;">
-          <span class="card-source-domain">${item.source || 'upload'}</span>
-          ${primaryTag ? `<span class="card-tag">${primaryTag}</span>` : ''}
+      ${primaryTag ? `
+        <div style="padding: 0 16px 12px 16px; width: 100%;">
+          <div class="card-meta" style="margin-top: 4px; padding-top: 0; border-top: none; justify-content: flex-end;">
+            <span class="card-tag">${primaryTag}</span>
+          </div>
         </div>
-      </div>
+      ` : ''}
     `;
   } else {
     card.innerHTML = `
       <div class="card-top">
         <div class="card-header">
-          <span class="badge">
-            <i data-lucide="${iconName}" style="width: 12px; height: 12px;"></i>
+          <span class="card-type-badge">
+            <i data-lucide="${iconName}" class="card-type-icon"></i>
             <span>${typeLabel}</span>
           </span>
           <span class="card-date">${relativeTime}</span>
         </div>
         ${customBodyHtml}
       </div>
-      <div class="card-meta">
-        <span class="card-source-domain">${item.source || 'manual'}</span>
-        ${primaryTag ? `<span class="card-tag">${primaryTag}</span>` : ''}
-      </div>
+      ${primaryTag ? `
+        <div class="card-meta">
+          <span class="card-tag" style="margin-left: auto;">${primaryTag}</span>
+        </div>
+      ` : ''}
     `;
   }
 
@@ -849,7 +1101,6 @@ function createCardElement(item) {
 function renderHomeRecentGrid() {
   const gridEl = document.getElementById("recent-items-grid");
   const recentSectionEl = document.getElementById("home-recent-section");
-  const tagsSectionEl = document.getElementById("home-tags-section");
   const welcomeEmptyEl = document.getElementById("home-welcome-empty-state");
 
   if (!gridEl) return;
@@ -857,14 +1108,12 @@ function renderHomeRecentGrid() {
 
   if (database.length === 0) {
     if (recentSectionEl) recentSectionEl.style.display = "none";
-    if (tagsSectionEl) tagsSectionEl.style.display = "none";
     if (welcomeEmptyEl) welcomeEmptyEl.style.display = "flex";
     return;
   }
 
   // Database has items
   if (recentSectionEl) recentSectionEl.style.display = "block";
-  if (tagsSectionEl) tagsSectionEl.style.display = "block";
   if (welcomeEmptyEl) welcomeEmptyEl.style.display = "none";
 
   // Sort items: newest first, take top 6
@@ -890,36 +1139,6 @@ function getTagsListWithCounts() {
   return Object.entries(counts)
     .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count);
-}
-
-// 3. Home: Suggested Tags Cloud
-function renderHomeSuggestedTags() {
-  const containerEl = document.getElementById("suggested-tags-cloud");
-  containerEl.innerHTML = "";
-  
-  const tagsList = getTagsListWithCounts();
-  
-  if (tagsList.length === 0) {
-    containerEl.innerHTML = `<span class="empty-placeholder">No tags created yet.</span>`;
-    return;
-  }
-
-  tagsList.forEach(({ tag, count }) => {
-    const badge = document.createElement("button");
-    badge.className = "tag-badge";
-    badge.innerHTML = `${tag} <span class="tag-count">${count}</span>`;
-    badge.addEventListener("click", () => {
-      // Trigger search filter with this tag
-      activeTypeFilter = "all";
-      activeTagFilters = [tag];
-      
-      // Update UI filters
-      window.location.hash = "#search";
-      renderAll();
-      lucide.createIcons();
-    });
-    containerEl.appendChild(badge);
-  });
 }
 
 // 4. Search View Filters
@@ -1090,6 +1309,29 @@ function renderSettingsStats() {
  * Event Listeners & Interactions Register
  * ------------------------------------------------------------- */
 function registerEventListeners() {
+  // Header Logo click -> Home
+  const headerLogo = document.getElementById("header-logo");
+  if (headerLogo) {
+    headerLogo.addEventListener("click", () => {
+      window.location.hash = "#home";
+    });
+  }
+
+  // Back to Home buttons in Search and Settings
+  const searchBackHomeBtn = document.getElementById("btn-search-back-home");
+  if (searchBackHomeBtn) {
+    searchBackHomeBtn.addEventListener("click", () => {
+      window.location.hash = "#home";
+    });
+  }
+
+  const settingsBackHomeBtn = document.getElementById("btn-settings-back-home");
+  if (settingsBackHomeBtn) {
+    settingsBackHomeBtn.addEventListener("click", () => {
+      window.location.hash = "#home";
+    });
+  }
+
   // Navigation Tabs clicks
   document.querySelectorAll(".nav-tab").forEach(tab => {
     tab.addEventListener("click", () => {
@@ -1153,18 +1395,11 @@ function registerEventListeners() {
   });
 
   // Settings: Theme Toggle
-  document.getElementById("theme-toggle-switch").addEventListener("change", toggleTheme);
+  const themeSwitch = document.getElementById("theme-toggle-switch");
+  if (themeSwitch) {
+    themeSwitch.addEventListener("change", toggleTheme);
+  }
 
-  // Settings: Spacing Density Toggles
-  document.querySelectorAll(".density-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      setDensity(btn.getAttribute("data-density"));
-    });
-  });
-
-  // Settings: Export database
-  document.getElementById("btn-export").addEventListener("click", exportData);
-  
   // Home Welcome Empty State Action
   const welcomeKeepBtn = document.getElementById("welcome-keep-btn");
   if (welcomeKeepBtn) {
@@ -1190,11 +1425,6 @@ function registerEventListeners() {
     showToast("Workspace cleared — all memories removed", "info");
   });
 
-  // Settings: Sign out mock
-  document.getElementById("btn-signout").addEventListener("click", () => {
-    showToast("This is a visual prototype. Auth features are disabled.", "info");
-  });
-
   // Floating Action: "+ Keep" button clicks
   document.getElementById("btn-open-keep").addEventListener("click", openKeepModal);
   
@@ -1209,7 +1439,10 @@ function registerEventListeners() {
   const captureEditor = document.getElementById("keep-capture-editor");
   const fileInput = document.getElementById("keep-file");
 
-  captureEditor.addEventListener("input", renderCapturePreviews);
+  captureEditor.addEventListener("input", () => {
+    clearModalStatusError();
+    renderCapturePreviews();
+  });
   captureEditor.addEventListener("paste", handleCapturePaste);
 
   captureEditor.addEventListener("dragover", (e) => {
@@ -1242,6 +1475,12 @@ function registerEventListeners() {
       e.preventDefault();
       const toolbar = btn.closest(".capture-toolbar");
       const editorId = toolbar && toolbar.id === "detail-toolbar" ? "detail-note" : "keep-capture-editor";
+      
+      if (btn.classList.contains("emoji-trigger-btn") || btn.getAttribute("data-action") === "emoji") {
+        openEmojiPicker(btn, editorId);
+        return;
+      }
+
       handleToolbarCommand(btn, editorId);
     });
   });
@@ -1260,6 +1499,21 @@ function registerEventListeners() {
       }
     }
   });
+
+  // Confirmation Dialog listeners
+  const cancelConfirmBtn = document.getElementById("btn-confirm-cancel");
+  const closeConfirmBtn = document.getElementById("btn-confirm-close");
+  const actionConfirmBtn = document.getElementById("btn-confirm-action");
+
+  if (cancelConfirmBtn) cancelConfirmBtn.addEventListener("click", closeConfirmDialog);
+  if (closeConfirmBtn) closeConfirmBtn.addEventListener("click", closeConfirmDialog);
+  if (actionConfirmBtn) {
+    actionConfirmBtn.addEventListener("click", () => {
+      const cb = activeConfirmCallback;
+      closeConfirmDialog();
+      if (cb) cb();
+    });
+  }
 
   // Detail Drawer: Close actions
   document.getElementById("btn-close-detail").addEventListener("click", closeDetailDrawer);
@@ -1304,9 +1558,313 @@ function registerEventListeners() {
 }
 
 /* -------------------------------------------------------------
+ * Confirmation Dialog Helper
+ * ------------------------------------------------------------- */
+let activeConfirmCallback = null;
+
+function showConfirmDialog({ title, message, cancelText = "Cancel", confirmText = "Confirm", isDanger = false, onConfirm }) {
+  const modal = document.getElementById("confirm-dialog-modal");
+  const titleEl = document.getElementById("confirm-dialog-title");
+  const msgEl = document.getElementById("confirm-dialog-message");
+  const cancelBtn = document.getElementById("btn-confirm-cancel");
+  const actionBtn = document.getElementById("btn-confirm-action");
+
+  if (!modal || !titleEl || !msgEl || !cancelBtn || !actionBtn) return;
+
+  titleEl.textContent = title;
+  msgEl.textContent = message;
+  cancelBtn.textContent = cancelText;
+  actionBtn.textContent = confirmText;
+
+  if (isDanger) {
+    actionBtn.className = "btn btn-danger";
+  } else {
+    actionBtn.className = "btn btn-primary";
+  }
+
+  activeConfirmCallback = onConfirm;
+  modal.classList.add("active");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeConfirmDialog() {
+  const modal = document.getElementById("confirm-dialog-modal");
+  if (modal) modal.classList.remove("active");
+  activeConfirmCallback = null;
+}
+
+/* -------------------------------------------------------------
  * Keep Modal Interactions & Actions
  * ------------------------------------------------------------- */
 let selectedModalTags = [];
+
+const ALLOWED_FILE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "pdf", "doc", "docx", "txt", "md"];
+const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+
+function validateFile(file) {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    return { valid: false, error: "Files larger than 25 MB aren't supported yet." };
+  }
+
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!ALLOWED_FILE_EXTENSIONS.includes(ext)) {
+    return { valid: false, error: "This file type isn't supported yet. Supported: Images, PDF, Word, Text and Markdown." };
+  }
+
+  return { valid: true };
+}
+
+function setModalStatusError(msg) {
+  const statusEl = document.getElementById("modal-status-text");
+  if (statusEl) {
+    statusEl.textContent = msg;
+    statusEl.classList.add("status-error");
+  }
+}
+
+function clearModalStatusError() {
+  const statusEl = document.getElementById("modal-status-text");
+  if (statusEl) {
+    statusEl.classList.remove("status-error");
+    updateModalStatus();
+  }
+}
+
+/* -------------------------------------------------------------
+ * Lightweight Emoji Picker & Insertion Manager
+ * ------------------------------------------------------------- */
+const EMOJI_DATA = {
+  smileys: ["😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😋","😛","😜","🤪","🧐","🤓","😎","🤩","🥳","🤠","🤡","😏","😬","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","🤬","🤯","💀","💩","👻","👽","🤖"],
+  emotions: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","🖐️","👍","👎","👊","✊","🤛","🤜","👏","🙌","👐","🤲","🤝","✍️","💅","🤳","💪","🧠"],
+  learning: ["🧠","📖","📚","💡","📝","✏️","📄","📑","📌","📍","🔍","🔎","🎓","📜","🎨","💭","💬","🗯️","🗣️"],
+  work: ["💼","📁","📂","📊","📈","📉","📅","📆","⏱️","💻","🖥️","📱","✉️","📧","📬","🗄️","🔐","🔑","🏆","🎯"],
+  travel: ["✈️","🚀","🛸","⛵","🗺️","🧳","🏖️","🏝️","⛰️","🌲","🌳","🌴","🌵","🌷","🌸","🌹","🍀","🍁","☀️","🌙","⭐️","🌟","⚡","🌊"],
+  food: ["🍔","🍟","🍕","🌭","🥪","🌮","🌯","🍜","🍲","🍣","🍱","🥟","🍞","🥐","🧇","🥞","☕","🍵","🧃","🍷","🍸","🍰","🍦","🍎"],
+  media: ["🎵","🎶","🎧","🎤","🎬","🎥","📸","📷","📺","📻","🎮","🎲","🎨","🎭","🎪","🎟️"],
+  favorites: ["⭐","🌟","✨","💥","🔥","⚡","🎉","🎊","🎁","🎈","🏆","🥇","🎖️","🏷️","🔒","⚡","💬","🖤"]
+};
+
+const EMOJI_KEYWORDS = {
+  "😀": "smile happy face expression", "😃": "smile happy face", "😄": "smile happy laughing", "😁": "grin happy", "😆": "laugh happy", "😅": "sweat smile happy", "😂": "joy laugh cry tears", "🤣": "rofl laugh floor", "😊": "blush happy smile", "😇": "angel innocent", "🙂": "slight smile", "🙃": "upside down silly", "😉": "wink sly", "😌": "relieved calm quiet", "😍": "love heart eyes", "🥰": "love hearts affection", "😘": "kiss love", "😋": "delicious yum food", "😛": "tongue silly", "😜": "wink tongue playful", "🤪": "zany crazy", "🧐": "monocle inspect curious", "🤓": "nerd smart book", "😎": "cool sunglasses shade", "🤩": "starry eyes excited", "🥳": "party celebrate hat", "🤠": "cowboy hat", "🤡": "clown funny", "😏": "smirk sly", "😬": "grimace awkward", "😮": "surprised open mouth", "😯": "hushed quiet", "😲": "astonished shocked", "😳": "flustered blush", "🥺": "pleading puppy eyes", "😦": "frown disappointed", "😧": "anguished worry", "😨": "fear scared", "😰": "anxious sweat", "😥": "sad sweat relief", "😢": "cry tear sad", "😭": "sob crying tears", "😱": "scream scared fear", "😖": "confounded frustrated", "😣": "persevering struggle", "😞": "disappointed sad", "😓": "hard work sweat", "😩": "weary tired", "😫": "tired exhausted", "🥱": "yawn sleepy", "😤": "triumph proud mad", "😡": "angry mad red", "🤬": "cursing swearing angry", "🤯": "exploding mind blow mindblown", "💀": "skull dead death", "💩": "poop funny", "👻": "ghost spooky Halloween", "👽": "alien space", "🤖": "robot bot tech",
+  "❤️": "red heart love", "🧡": "orange heart love", "💛": "yellow heart love", "💚": "green heart love", "💙": "blue heart love", "💜": "purple heart love", "🖤": "black heart love", "🤍": "white heart love", "🤎": "brown heart love", "💔": "broken heart sad", "❣️": "exclamation heart", "💕": "two hearts love", "💞": "revolving hearts", "💓": "beating heart pulse", "💗": "growing heart", "💖": "sparkle heart", "💘": "cupid arrow heart", "💝": "ribbon heart gift", "💟": "heart decoration", "🖐️": "hand five open", "👍": "thumbs up agree like good yes", "👎": "thumbs down dislike no bad", "👊": "fist punch bump", "✊": "raised fist power strength", "🤛": "left fist bump", "🤜": "right fist bump", "👏": "clap applause praise bravo", "🙌": "raising hands celebrate praise", "👐": "open hands hug", "🤲": "palms up pray hope", "🤝": "handshake agree deal partner", "✍️": "writing hand write memo note", "💅": "nail polish care chill", "🤳": "selfie photo camera", "💪": "biceps flex strong muscle", "🧠": "brain mind idea thought startup psychology intelligence",
+  "📖": "open book reading read study story paper", "📚": "books reading list study library learn", "💡": "light bulb idea insight creative smart", "📝": "memo note write paper journal", "✏️": "pencil write draft design edit", "📄": "document page file pdf text", "📑": "bookmark tabs document", "📌": "pushpin pin important keep save", "📍": "round pin location map spot", "🔍": "search magnifying glass find inspect", "🔎": "search find inspect", "🎓": "graduation cap education student learn degree", "📜": "scroll document history classic", "🎨": "art palette design draw paint creative", "💭": "thought bubble dream thinking", "💬": "speech bubble comment chat message note", "🗯️": "angry bubble chat", "🗣️": "speaking talk speak voice",
+  "💼": "briefcase work career job business office resume", "📁": "file folder organize archive", "📂": "open folder view documents", "📊": "bar chart graph analytics stats data", "📈": "chart increasing growth progress success", "📉": "chart decreasing decline stats", "📅": "calendar date schedule event day", "📆": "tear off calendar schedule", "⏱️": "stopwatch timer speed fast", "💻": "laptop computer tech code developer software", "🖥️": "desktop monitor screen display", "📱": "mobile phone smartphone tech call", "✉️": "envelope email mail letter message", "📧": "email e-mail mail inbox", "📬": "mailbox mail letter post", "🗄️": "file cabinet drawer archive database storage", "🔐": "closed lock key secure private password", "🔑": "key password access auth unlock", "🏆": "trophy prize winner first award", "🎯": "bullseye target goal objective focus",
+  "✈️": "airplane travel flight trip itinerary japan vacation fly", "🚀": "rocket launch startup speed space boost", "🛸": "flying saucer ufo space", "⛵": "sailboat boat sea ocean travel", "🗺️": "world map travel itinerary location navigate guide", "🧳": "luggage suitcase travel trip pack", "🏖️": "beach umbrella sand vacation island travel", "🏝️": "desert island tropical beach travel", "⛰️": "mountain nature climb hiking outdoor", "🌲": "evergreen tree forest nature pine", "🌳": "deciduous tree nature forest park", "🌴": "palm tree beach tropical island", "🌵": "cactus desert plant nature", "🌷": "tulip flower spring nature garden", "🌸": "cherry blossom sakura flower japan garden", "🌹": "rose red flower love garden", "🍀": "four leaf clover lucky fortune", "🍁": "maple leaf autumn fall nature", "☀️": "sun sunny bright weather summer", "🌙": "crescent moon night quiet dark sleep", "⭐️": "star favorite rating rank golden", "🌟": "glowing star shine bright special", "⚡": "high voltage lightning electric fast energy", "🌊": "water wave ocean sea surf",
+  "🍔": "hamburger burger food fastfood eat", "🍟": "french fries food snack", "🍕": "pizza slice food party", "🌭": "hotdog food snack", "🥪": "sandwich lunch food", "🌮": "taco Mexican food", "🌯": "burrito food", "🍜": "ramen steamed bowl noodles soup recipe food cooking dish eat", "🍲": "pot of food soup stew recipe dish", "🍣": "sushi Japanese food fish seafood", "🍱": "bento box lunch food Japanese", "🥟": "dumpling food dim sum", "🍞": "bread loaf toast food", "🥐": "croissant pastry bakery breakfast", "🧇": "waffle breakfast food", "🥞": "pancakes breakfast food syrup", "☕": "hot beverage coffee tea cafe drink morning", "🍵": "teacup matcha green tea drink", "🧃": "beverage juice box drink", "🍷": "wine glass drink alcohol party bar", "🍸": "cocktail glass drink party bar", "🍰": "shortcake cake dessert sweet birthday", "🍦": "soft ice cream dessert sweet cold", "🍎": "red apple fruit healthy food snack",
+  "🎵": "musical note song sound audio music melody", "🎶": "musical notes singing music song", "🎧": "headphone audio music podcast listen", "🎤": "microphone sing talk audio speech podcast", "🎬": "clapper board movie film cinema video media", "🎥": "movie camera cinema film video record", "📸": "camera flash photo photograph screenshot image", "📷": "camera photo screenshot image picture", "📺": "television tv screen video show watch", "📻": "radio broadcast audio", "🎮": "video game controller play gaming fun", "🎲": "game die dice luck random", "🎭": "performing arts theater mask drama show", "🎪": "circus tent show event", "🎟️": "admission tickets event show movie ticket",
+  "⭐": "star favorite bookmark keep highlight golden", "✨": "sparkles clean shiny magic new polish", "💥": "collision explosion pop impact", "🔥": "fire hot popular trending streak energy", "🎉": "party popper celebration congrats yay", "🎊": "confetti ball party celebrate", "🎁": "wrapped gift present surprise reward", "🎈": "balloon party birthday celebrate", "🥇": "1st place medal gold winner trophy champion", "🎖️": "military medal honor reward", "🏷️": "label tag tag-chip organize category", "🔒": "lock secret private password safe", "🖤": "black heart love dark"
+};
+
+let activeEmojiEditorId = "keep-capture-editor";
+let currentEmojiCategory = "smileys";
+let savedEmojiRange = null;
+
+function saveEditorSelection(editorEl) {
+  if (!editorEl) return;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    if (editorEl.contains(range.commonAncestorContainer)) {
+      savedEmojiRange = range.cloneRange();
+    }
+  }
+}
+
+function restoreEditorSelection(editorEl) {
+  if (!editorEl) return;
+  editorEl.focus();
+  const sel = window.getSelection();
+  if (!sel) return;
+
+  if (savedEmojiRange && editorEl.contains(savedEmojiRange.commonAncestorContainer)) {
+    sel.removeAllRanges();
+    sel.addRange(savedEmojiRange);
+  } else {
+    // Fallback: place cursor at end of contenteditable element
+    const range = document.createRange();
+    range.selectNodeContents(editorEl);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    savedEmojiRange = range.cloneRange();
+  }
+}
+
+function initEmojiPicker() {
+  const popover = document.getElementById("emoji-picker-popover");
+  const searchInput = document.getElementById("emoji-search-input");
+  const closeBtn = document.getElementById("btn-close-emoji-picker");
+  const categoriesContainer = document.getElementById("emoji-categories");
+
+  if (!popover) return;
+
+  // Keep selection ranges updated on editable areas
+  ["keep-capture-editor", "detail-note"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      ["keyup", "mouseup", "focus", "input"].forEach(evt => {
+        el.addEventListener(evt, () => saveEditorSelection(el));
+      });
+    }
+  });
+
+  renderEmojiPickerGrid();
+
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      renderEmojiPickerGrid(e.target.value.trim().toLowerCase());
+    });
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeEmojiPicker);
+  }
+
+  if (categoriesContainer) {
+    categoriesContainer.querySelectorAll(".emoji-cat-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        categoriesContainer.querySelectorAll(".emoji-cat-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentEmojiCategory = btn.getAttribute("data-category");
+        if (searchInput) searchInput.value = "";
+        renderEmojiPickerGrid();
+      });
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    if (popover.style.display !== "none") {
+      const isTrigger = e.target.closest(".emoji-trigger-btn");
+      const isInside = popover.contains(e.target);
+      if (!isTrigger && !isInside) {
+        closeEmojiPicker();
+      }
+    }
+  });
+}
+
+function renderEmojiPickerGrid(searchFilter = "") {
+  const grid = document.getElementById("emoji-picker-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  let emojisToRender = [];
+
+  if (searchFilter) {
+    const matched = new Set();
+    Object.keys(EMOJI_DATA).forEach(cat => {
+      EMOJI_DATA[cat].forEach(emoji => {
+        const keywords = EMOJI_KEYWORDS[emoji] || "";
+        if (keywords.includes(searchFilter) || emoji.includes(searchFilter)) {
+          matched.add(emoji);
+        }
+      });
+    });
+    emojisToRender = Array.from(matched);
+  } else {
+    emojisToRender = EMOJI_DATA[currentEmojiCategory] || EMOJI_DATA.smileys;
+  }
+
+  if (emojisToRender.length === 0) {
+    grid.innerHTML = `<div class="emoji-empty-text">No emojis found</div>`;
+    return;
+  }
+
+  emojisToRender.forEach(emoji => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "emoji-item-btn";
+    btn.textContent = emoji;
+    btn.title = emoji;
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      insertEmojiAtCursor(activeEmojiEditorId, emoji);
+      closeEmojiPicker();
+    });
+
+    grid.appendChild(btn);
+  });
+}
+
+function openEmojiPicker(triggerBtn, targetEditorId) {
+  activeEmojiEditorId = targetEditorId;
+  const targetEditor = document.getElementById(targetEditorId);
+  if (targetEditor) {
+    saveEditorSelection(targetEditor);
+  }
+
+  const popover = document.getElementById("emoji-picker-popover");
+  const searchInput = document.getElementById("emoji-search-input");
+  
+  if (!popover) return;
+
+  const rect = triggerBtn.getBoundingClientRect();
+  const popoverWidth = 320;
+  const popoverHeight = 310;
+
+  let left = rect.left;
+  let top = rect.bottom + 8;
+
+  if (left + popoverWidth > window.innerWidth - 12) {
+    left = window.innerWidth - popoverWidth - 12;
+  }
+  if (left < 12) left = 12;
+
+  if (top + popoverHeight > window.innerHeight - 12) {
+    top = rect.top - popoverHeight - 8;
+  }
+  if (top < 12) top = 12;
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+  popover.style.display = "flex";
+
+  if (searchInput) {
+    searchInput.value = "";
+    setTimeout(() => searchInput.focus(), 50);
+  }
+
+  renderEmojiPickerGrid();
+  lucide.createIcons();
+}
+
+function closeEmojiPicker() {
+  const popover = document.getElementById("emoji-picker-popover");
+  if (popover) {
+    popover.style.display = "none";
+  }
+}
+
+function insertEmojiAtCursor(editorId, emoji) {
+  const editorEl = document.getElementById(editorId);
+  if (!editorEl) return;
+
+  restoreEditorSelection(editorEl);
+
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    if (editorEl.contains(range.commonAncestorContainer)) {
+      range.deleteContents();
+      const textNode = document.createTextNode(emoji);
+      range.insertNode(textNode);
+      range.setStartAfter(textNode);
+      range.setEndAfter(textNode);
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      savedEmojiRange = range.cloneRange();
+
+      editorEl.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+  }
+
+  document.execCommand("insertText", false, emoji);
+  editorEl.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 function handleToolbarCommand(btn, targetEditorId = "keep-capture-editor") {
   const command = btn.getAttribute("data-command");
@@ -1347,11 +1905,26 @@ function handleCapturePaste(e) {
 }
 
 function addCaptureFiles(files) {
+  let fileError = "";
+
   files.forEach(file => {
+    const check = validateFile(file);
+    if (!check.valid) {
+      fileError = check.error;
+      return;
+    }
+
     if (!captureFiles.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified)) {
       captureFiles.push(file);
     }
   });
+
+  if (fileError) {
+    setModalStatusError(fileError);
+  } else {
+    clearModalStatusError();
+  }
+
   renderCapturePreviews();
 }
 
@@ -1361,7 +1934,8 @@ function removeCaptureFile(index) {
 }
 
 function getCaptureEditorText() {
-  return stripHtml(document.getElementById("keep-capture-editor").innerHTML);
+  const el = document.getElementById("keep-capture-editor");
+  return el ? stripHtml(el.innerHTML) : "";
 }
 
 function renderCapturePreviews() {
@@ -1440,12 +2014,45 @@ function openKeepModal() {
     document.getElementById("keep-capture-editor").focus();
   }, 200);
 
-  updateModalStatus();
+  clearModalStatusError();
   lucide.createIcons();
 }
 
+function isKeepModalDirty() {
+  const editorText = getCaptureEditorText().trim();
+  const hasText = editorText.length > 0;
+  const hasFiles = captureFiles.length > 0;
+  const hasTags = selectedModalTags.length > 0;
+  return hasText || hasFiles || hasTags;
+}
+
 function closeKeepModal() {
-  document.getElementById("keep-modal").classList.remove("active");
+  if (isKeepModalDirty()) {
+    showConfirmDialog({
+      title: "Discard this memory?",
+      message: "You have unsaved changes.",
+      cancelText: "Continue Editing",
+      confirmText: "Discard",
+      isDanger: true,
+      onConfirm: forceCloseKeepModal
+    });
+  } else {
+    forceCloseKeepModal();
+  }
+}
+
+function forceCloseKeepModal() {
+  const modal = document.getElementById("keep-modal");
+  if (modal) modal.classList.remove("active");
+  selectedModalTags = [];
+  captureFiles = [];
+  const editor = document.getElementById("keep-capture-editor");
+  if (editor) editor.innerHTML = "";
+  const form = document.getElementById("keep-form");
+  if (form) form.reset();
+  const previews = document.getElementById("capture-previews");
+  if (previews) previews.innerHTML = "";
+  clearModalStatusError();
 }
 
 function renderModalTagSelectors() {
@@ -1516,17 +2123,34 @@ function updateModalStatus() {
   }
 }
 
-function handleKeepItemSubmit(e) {
+let isSavingKeep = false;
+
+async function handleKeepItemSubmit(e) {
   e.preventDefault();
+
+  if (isSavingKeep) return;
 
   const editorEl = document.getElementById("keep-capture-editor");
   const rawHtml = editorEl ? editorEl.innerHTML.trim() : "";
   const noteContent = sanitizeAndFormatHtml(rawHtml);
-  const plainText = getCaptureEditorText();
+  const plainText = getCaptureEditorText().trim();
   const urls = extractUrls(plainText);
   const urlVal = urls.length > 0 ? urls[0] : "";
 
-  if (!plainText && !urlVal && captureFiles.length === 0) return;
+  // 1. Validate empty memory
+  if (!plainText && !urlVal && captureFiles.length === 0) {
+    setModalStatusError("Your memory is empty.");
+    return;
+  }
+
+  clearModalStatusError();
+
+  const submitBtn = document.getElementById("btn-submit-keep");
+  if (!submitBtn) return;
+
+  isSavingKeep = true;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<span class="btn-spinner"></span><span>Saving...</span>`;
 
   let itemType = "note";
   let domain = "";
@@ -1580,8 +2204,8 @@ function handleKeepItemSubmit(e) {
   } else if (captureFiles.length > 0) {
     title = captureFiles[0].name.replace(/\.[^/.]+$/, "");
   } else if (plainText) {
-    title = plainText.split("\n")[0].substring(0, 45);
-    if (title.length >= 45) title += "...";
+    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    title = noteLines[0] || "Kept note";
   } else if (urlVal) {
     title = domain || "Saved link";
   }
@@ -1603,43 +2227,51 @@ function handleKeepItemSubmit(e) {
     source: source
   };
 
-  const saveItem = async () => {
+  try {
     if (captureFiles.length > 0) {
       const primaryFile = captureFiles[0];
-      try {
-        const uploadRes = await repository.uploadFile(primaryFile);
-        if (uploadRes) {
-          if (typeof uploadRes === "object") {
-            newItem.storagePath = uploadRes.storagePath || "";
-            newItem.imageUrl = uploadRes.fileUrl || "";
-            newItem.fileSize = uploadRes.fileSize || "";
-            newItem.mimeType = uploadRes.mimeType || primaryFile.type || "";
-            newItem.fileName = uploadRes.fileName || primaryFile.name || "";
-            if (newItem.type !== "image" && !newItem.url) {
-              newItem.url = uploadRes.fileUrl || "";
-            }
-          } else if (typeof uploadRes === "string") {
-            newItem.imageUrl = uploadRes;
-            if (!uploadRes.startsWith("data:")) {
-              newItem.storagePath = uploadRes;
-            }
+      const uploadRes = await repository.uploadFile(primaryFile);
+      if (uploadRes) {
+        if (typeof uploadRes === "object") {
+          newItem.storagePath = uploadRes.storagePath || "";
+          newItem.imageUrl = uploadRes.fileUrl || "";
+          newItem.fileSize = uploadRes.fileSize || "";
+          newItem.mimeType = uploadRes.mimeType || primaryFile.type || "";
+          newItem.fileName = uploadRes.fileName || primaryFile.name || "";
+          if (newItem.type !== "image" && !newItem.url) {
+            newItem.url = uploadRes.fileUrl || "";
+          }
+        } else if (typeof uploadRes === "string") {
+          newItem.imageUrl = uploadRes;
+          if (!uploadRes.startsWith("data:")) {
+            newItem.storagePath = uploadRes;
           }
         }
-      } catch (err) {
-        console.error("Storage upload error:", err);
-        showToast("File upload failed: " + (err.message || "Failed to upload file"), "warning");
       }
     }
 
     await repository.add(newItem);
     database = await repository.getAll();
-    showToast("Kept", "success");
-    closeKeepModal();
-    renderAll();
-    lucide.createIcons();
-  };
 
-  saveItem();
+    // Success state: ✓ Kept for ~800ms
+    submitBtn.innerHTML = `<span>✓ Kept</span>`;
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    forceCloseKeepModal();
+    renderAll();
+    if (window.lucide) window.lucide.createIcons();
+
+  } catch (err) {
+    console.error("Error saving memory:", err);
+    showToast("We couldn't save this memory. Please try again.", "warning");
+    setModalStatusError("We couldn't save this memory. Please try again.");
+  } finally {
+    isSavingKeep = false;
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `Keep it`;
+    }
+  }
 }
 
 /* -------------------------------------------------------------
@@ -1732,68 +2364,62 @@ function renderDetailPreview(item) {
   const container = document.getElementById("detail-preview-container");
   container.innerHTML = "";
   
-  if (item.type === "link") {
+  const title = getArtifactTitle(item);
+
+  if (item.type === "note" || item.type === "quote") {
     container.innerHTML = `
-      <div class="rich-link-preview">
-        <div class="link-preview-image" style="background-image: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60');"></div>
-        <div class="link-preview-details">
-          <span class="link-preview-domain">${escapeHtml(item.domain || 'Link')}</span>
-          <a class="link-preview-title" href="${item.url}" target="_blank">${escapeHtml(item.title)} <i data-lucide="external-link" style="width: 14px; height: 14px; display: inline-block; vertical-align: middle;"></i></a>
-          <div class="link-preview-desc">${sanitizeAndFormatHtml(item.content)}</div>
-        </div>
+      <div class="preview-note-box">
+        <h3 class="preview-note-title">${escapeHtml(title)}</h3>
       </div>
     `;
-  } else if (item.type === "quote") {
+  } else if (item.type === "link") {
+    let domainText = item.domain || "";
+    if (!domainText && item.url) {
+      try {
+        domainText = new URL(item.url).hostname.replace("www.", "");
+      } catch (e) {
+        domainText = "";
+      }
+    }
     container.innerHTML = `
-      <div class="rich-quote-preview">
-        <i data-lucide="quote" class="quote-icon"></i>
-        <div class="quote-preview-text">${sanitizeAndFormatHtml(item.content)}</div>
-        <span class="quote-preview-author">— ${escapeHtml(item.author || 'Unknown')}</span>
+      <div class="preview-link-box">
+        <div class="preview-link-header">
+          <div class="preview-favicon">
+            <img src="https://www.google.com/s2/favicons?sz=64&domain=${domainText || 'example.com'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23666%22 stroke-width=%222%22><circle cx=%2212%22 cy=%2212%22 r=%2210%22/></svg>'">
+          </div>
+          <div class="preview-link-details">
+            <span class="preview-link-title">${escapeHtml(title)}</span>
+            ${domainText ? `<span class="preview-link-domain">${escapeHtml(domainText)}</span>` : ''}
+          </div>
+        </div>
       </div>
     `;
   } else if (item.type === "image") {
-    const imgUrl = item.imageUrl || item.url || "assets/linear_project_overview.png";
+    const imgUrl = item.imageUrl || item.url || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
     container.innerHTML = `
-      <div class="rich-image-preview">
-        <img src="${imgUrl}" alt="${escapeHtml(item.title)}">
+      <div class="preview-image-box">
+        <img class="preview-image-media" src="${imgUrl}" alt="${escapeHtml(title)}">
+        <div class="preview-image-info">
+          <span class="preview-image-title">${escapeHtml(title)}</span>
+        </div>
       </div>
     `;
   } else if (item.type === "pdf" || item.type === "file") {
-    const fileLabel = item.type === "pdf" ? "PDF Document" : "Document";
+    const docLabel = item.type === "pdf" ? "PDF" : "DOC";
     const fileLink = item.url || item.imageUrl || "#";
     container.innerHTML = `
-      <div class="rich-pdf-preview">
-        <div class="pdf-icon-wrap">${item.type === "pdf" ? "PDF" : "DOC"}</div>
+      <div class="preview-pdf-box">
+        <div class="pdf-icon-wrap">${docLabel}</div>
         <div class="pdf-details">
-          <span class="pdf-name">${escapeHtml(item.title)}</span>
-          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : fileLabel} ${item.storagePath ? '• Supabase Storage' : ''}</span>
+          <span class="pdf-name">${escapeHtml(title)}</span>
+          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'PDF Document'}</span>
         </div>
         ${fileLink && fileLink !== '#' ? `
-          <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" download="${escapeHtml(item.title)}">
+          <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" download="${escapeHtml(title)}">
             <i data-lucide="download"></i>
             <span>Open</span>
           </a>
-        ` : `
-          <button class="btn btn-secondary btn-sm" type="button" onclick="showToast('Opening document viewer...', 'info')">
-            <i data-lucide="eye"></i>
-          </button>
-        `}
-      </div>
-    `;
-  } else {
-    // Note or general content preview box
-    container.innerHTML = `
-      <div class="rich-note-preview">
-        <div class="note-preview-header">
-          <div class="pdf-icon-wrap" style="background: var(--color-primary-light); color: var(--color-primary); border-color: var(--color-primary); font-size: 0.8125rem; width: 36px; height: 36px; border-radius: var(--radius-sm); flex-shrink: 0;">
-            <i data-lucide="file-text" style="width: 18px; height: 18px;"></i>
-          </div>
-          <div class="pdf-details" style="gap: 2px;">
-            <span class="pdf-name">${escapeHtml(item.title)}</span>
-            <span class="pdf-meta">Note document</span>
-          </div>
-        </div>
-        ${item.content ? `<div class="rich-note-body">${sanitizeAndFormatHtml(item.content)}</div>` : ''}
+        ` : ''}
       </div>
     `;
   }
@@ -1825,10 +2451,13 @@ async function handleSaveDetailChanges(e) {
   database[dbIndex].updatedAt = Date.now();
 
   let newTitle = database[dbIndex].title;
-  if (database[dbIndex].type === "note" || database[dbIndex].type === "link") {
+  if (database[dbIndex].type === "note") {
+    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    newTitle = noteLines[0] || database[dbIndex].title || "Kept note";
+  } else if (database[dbIndex].type === "link") {
     newTitle = plainText.split("\n")[0].substring(0, 45);
     if (newTitle.length >= 45) newTitle += "...";
-    newTitle = newTitle || database[dbIndex].title || "Kept note";
+    newTitle = newTitle || database[dbIndex].title || "Saved link";
   }
 
   let domainVal = database[dbIndex].domain;
@@ -1856,16 +2485,41 @@ async function handleSaveDetailChanges(e) {
   showToast("Saved changes", "success");
 }
 
-async function handleDeleteDetailItem() {
+function handleDeleteDetailItem() {
   if (!currentDetailItem) return;
 
-  await repository.delete(currentDetailItem.id);
-  database = await repository.getAll();
-  
-  closeDetailDrawer();
-  renderAll();
-  lucide.createIcons();
-  showToast("Memory deleted", "info");
+  const targetId = currentDetailItem.id;
+
+  showConfirmDialog({
+    title: "Delete this memory?",
+    message: "This action cannot be undone.",
+    cancelText: "Cancel",
+    confirmText: "Delete",
+    isDanger: true,
+    onConfirm: async () => {
+      try {
+        await repository.delete(targetId);
+        database = database.filter(item => item.id !== targetId);
+        
+        const latest = await repository.getAll();
+        if (latest && Array.isArray(latest)) {
+          database = latest;
+        }
+
+        closeDetailDrawer();
+        renderAll();
+        if (window.lucide) window.lucide.createIcons();
+        showToast("Memory deleted", "info");
+      } catch (err) {
+        console.error("Error deleting memory:", err);
+        database = database.filter(item => item.id !== targetId);
+        closeDetailDrawer();
+        renderAll();
+        if (window.lucide) window.lucide.createIcons();
+        showToast("Memory deleted", "info");
+      }
+    }
+  });
 }
 
 /* -------------------------------------------------------------
@@ -2081,15 +2735,20 @@ function handleKeyboardShortcuts(e) {
   const isInputFocused = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
     || document.activeElement.isContentEditable;
 
-  // Escape key: close modals/drawer
+  // Escape key: close modals/drawer/popover
   if (e.key === "Escape") {
+    const emojiPopover = document.getElementById("emoji-picker-popover");
+    const confirmModal = document.getElementById("confirm-dialog-modal");
     const keepModal = document.getElementById("keep-modal");
     const detailDrawer = document.getElementById("detail-drawer");
     
-    if (keepModal.classList.contains("active")) {
+    if (emojiPopover && emojiPopover.style.display !== "none") {
+      closeEmojiPicker();
+    } else if (confirmModal && confirmModal.classList.contains("active")) {
+      closeConfirmDialog();
+    } else if (keepModal && keepModal.classList.contains("active")) {
       closeKeepModal();
-    }
-    if (detailDrawer.classList.contains("active")) {
+    } else if (detailDrawer && detailDrawer.classList.contains("active")) {
       closeDetailDrawer();
     }
   }

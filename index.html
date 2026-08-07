@@ -18,7 +18,7 @@
   <!-- Navigation Bar -->
   <header class="app-header">
     <div class="header-left">
-      <div class="logo">
+      <div class="logo" id="header-logo" role="button" tabindex="0" title="Go to Home" style="cursor: pointer;">
         <i data-lucide="bookmark" class="logo-icon"></i>
         <span>keepr.</span>
       </div>
@@ -33,16 +33,26 @@
         <i data-lucide="search"></i>
         <span>Search</span>
       </button>
-      <button class="nav-tab" data-tab="settings" id="nav-settings">
-        <i data-lucide="sliders"></i>
-        <span>Settings</span>
-      </button>
     </nav>
     
     <div class="header-right">
-      <div class="profile-avatar" id="header-profile-avatar">
-        <span class="avatar-letter" id="header-avatar-letter">J</span>
-        <span class="profile-name" id="header-profile-name">James</span>
+      <div class="profile-avatar-container" id="header-profile-container">
+        <button type="button" class="profile-avatar" id="header-profile-avatar" aria-haspopup="true" aria-expanded="false" title="Account menu">
+          <span class="avatar-letter" id="header-avatar-letter">K</span>
+          <span class="profile-name" id="header-profile-name">User</span>
+          <i data-lucide="chevron-down" class="avatar-chevron"></i>
+        </button>
+        <div class="profile-dropdown-menu" id="profile-dropdown-menu" style="display: none;">
+          <button type="button" class="profile-dropdown-item" id="dropdown-btn-settings">
+            <i data-lucide="sliders"></i>
+            <span>Settings</span>
+          </button>
+          <div class="profile-dropdown-divider"></div>
+          <button type="button" class="profile-dropdown-item danger" id="dropdown-btn-signout">
+            <i data-lucide="log-out"></i>
+            <span>Sign out</span>
+          </button>
+        </div>
       </div>
     </div>
   </header>
@@ -54,13 +64,13 @@
     <section id="view-home" class="view-panel active">
       <div class="hero-section">
         <h1 class="hero-title">What's worth remembering today?</h1>
-        <p class="hero-subtitle" id="dynamic-greeting">Good afternoon, James 👋</p>
+        <p class="hero-subtitle" id="dynamic-greeting">Good day 👋</p>
       </div>
 
       <!-- Quick Search triggers search view -->
       <div class="quick-search-trigger" id="quick-search-box">
         <i data-lucide="search" class="search-icon"></i>
-        <span class="placeholder-text">Search your second memory...</span>
+        <span class="placeholder-text">Search anything you've kept...</span>
         <span class="keyboard-hint"><kbd>⌘</kbd><kbd>K</kbd></span>
       </div>
 
@@ -128,25 +138,18 @@
           <!-- Dynamically populated via JS -->
         </div>
       </div>
-
-      <!-- Suggested Tags -->
-      <div class="section-container" id="home-tags-section">
-        <div class="section-header">
-          <div>
-            <h2 class="section-title">Suggested Tags</h2>
-            <p class="section-subtitle">Themes that keep showing up</p>
-          </div>
-        </div>
-        <div class="tags-cloud" id="suggested-tags-cloud">
-          <!-- Dynamically populated via JS -->
-        </div>
-      </div>
     </section>
 
     <!-- SEARCH VIEW -->
     <section id="view-search" class="view-panel">
       <div class="search-header-section">
-        <span class="sub-label">Search</span>
+        <div class="search-header-top">
+          <button type="button" class="back-to-home-btn" id="btn-search-back-home" title="Back to Home">
+            <i data-lucide="arrow-left"></i>
+            <span>Home</span>
+          </button>
+          <span class="sub-label">Search</span>
+        </div>
         <h1 class="view-title">Find anything you've kept</h1>
       </div>
 
@@ -203,7 +206,13 @@
     <!-- SETTINGS VIEW -->
     <section id="view-settings" class="view-panel">
       <div class="settings-header-section">
-        <span class="sub-label">Settings</span>
+        <div class="settings-header-top">
+          <button type="button" class="back-to-home-btn" id="btn-settings-back-home" title="Back to Home">
+            <i data-lucide="arrow-left"></i>
+            <span>Home</span>
+          </button>
+          <span class="sub-label">Settings</span>
+        </div>
         <h1 class="view-title">Quiet controls</h1>
       </div>
 
@@ -211,10 +220,10 @@
       <div class="settings-profile-card">
         <div class="profile-info-section">
           <div class="profile-main">
-            <div class="avatar-large" id="settings-avatar-large">N</div>
+            <div class="avatar-large" id="settings-avatar-large">U</div>
             <div class="profile-details">
-              <h3 id="settings-profile-name">Neelima Rao</h3>
-              <p id="settings-profile-email">neelima@keepr.app</p>
+              <h3 id="settings-profile-name">User</h3>
+              <p id="settings-profile-email"></p>
             </div>
           </div>
         </div>
@@ -222,15 +231,15 @@
         <div class="profile-stats-grid">
           <div class="stat-box">
             <span class="stat-label">Kept</span>
-            <span class="stat-value" id="stats-kept-count">12</span>
+            <span class="stat-value" id="stats-kept-count">0</span>
           </div>
           <div class="stat-box">
             <span class="stat-label">Tags</span>
-            <span class="stat-value" id="stats-tags-count">8</span>
+            <span class="stat-value" id="stats-tags-count">0</span>
           </div>
           <div class="stat-box">
             <span class="stat-label">Member Since</span>
-            <span class="stat-value" id="settings-member-since">August 2026</span>
+            <span class="stat-value" id="settings-member-since">—</span>
           </div>
         </div>
       </div>
@@ -258,51 +267,12 @@
               </div>
             </div>
           </div>
-
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Density</span>
-              <p class="setting-desc">Comfortable spacing. Compact mode is on the roadmap.</p>
-            </div>
-            <div class="setting-control">
-              <div class="density-switcher">
-                <button class="density-btn active" data-density="comfortable">Comfortable</button>
-                <button class="density-btn" data-density="compact">Compact</button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- Your Data Category -->
         <div class="settings-category">
           <h2 class="category-title">Your Data</h2>
           
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Export everything</span>
-              <p class="setting-desc">A quiet, portable archive of every artifact.</p>
-            </div>
-            <div class="setting-control">
-              <button class="btn btn-secondary" id="btn-export">
-                <i data-lucide="download"></i>
-                <span>Export</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Reset database</span>
-              <p class="setting-desc">Restore the default set of high-fidelity memories.</p>
-            </div>
-            <div class="setting-control">
-              <button class="btn btn-secondary" id="btn-reset-db">
-                <i data-lucide="refresh-cw"></i>
-                <span>Reset Sample Data</span>
-              </button>
-            </div>
-          </div>
-
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Clear workspace</span>
@@ -440,6 +410,7 @@
             <button type="button" class="toolbar-btn" data-command="checklist" title="Checklist"><i data-lucide="list-checks"></i></button>
             <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="blockquote" title="Quote"><i data-lucide="quote"></i></button>
             <button type="button" class="toolbar-btn" data-command="createLink" title="Link"><i data-lucide="link"></i></button>
+            <button type="button" class="toolbar-btn emoji-trigger-btn" data-action="emoji" title="Insert Emoji"><i data-lucide="smile"></i></button>
           </div>
           <div
             id="keep-capture-editor"
@@ -474,6 +445,29 @@
           </div>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- CONFIRMATION DIALOG MODAL -->
+  <div class="modal-backdrop" id="confirm-dialog-modal">
+    <div class="modal-card" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2 class="modal-title" id="confirm-dialog-title">Confirm Action</h2>
+        <button class="modal-close-btn" id="btn-confirm-close" type="button">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div style="margin-bottom: 24px;">
+        <p style="font-size: 0.95rem; color: var(--color-text-secondary); line-height: 1.5; margin-top: 4px;" id="confirm-dialog-message">
+          Are you sure?
+        </p>
+      </div>
+      <div class="modal-footer-actions">
+        <div class="footer-buttons" style="display: flex; gap: 10px; width: 100%; justify-content: flex-end;">
+          <button class="btn btn-tertiary" type="button" id="btn-confirm-cancel">Cancel</button>
+          <button class="btn btn-primary" type="button" id="btn-confirm-action">Confirm</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -533,6 +527,7 @@
               <button type="button" class="toolbar-btn" data-command="checklist" title="Checklist"><i data-lucide="list-checks"></i></button>
               <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="blockquote" title="Quote"><i data-lucide="quote"></i></button>
               <button type="button" class="toolbar-btn" data-command="createLink" title="Link"><i data-lucide="link"></i></button>
+              <button type="button" class="toolbar-btn emoji-trigger-btn" data-action="emoji" title="Insert Emoji"><i data-lucide="smile"></i></button>
             </div>
             <div id="detail-note" class="rich-editor drawer-note-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Write a note..."></div>
           </div>
@@ -591,6 +586,32 @@
 
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
+
+  <!-- Lightweight Emoji Picker Popover -->
+  <div class="emoji-picker-popover" id="emoji-picker-popover" style="display: none;">
+    <div class="emoji-picker-header">
+      <div class="emoji-search-wrap">
+        <i data-lucide="search" class="emoji-search-icon"></i>
+        <input type="text" id="emoji-search-input" placeholder="Search emojis..." autocomplete="off">
+      </div>
+      <button class="emoji-picker-close" id="btn-close-emoji-picker" type="button" aria-label="Close emoji picker">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+    <div class="emoji-categories" id="emoji-categories">
+      <button type="button" class="emoji-cat-btn active" data-category="smileys" title="Smileys">😀</button>
+      <button type="button" class="emoji-cat-btn" data-category="emotions" title="Emotions">❤️</button>
+      <button type="button" class="emoji-cat-btn" data-category="learning" title="Ideas & Learning">🧠</button>
+      <button type="button" class="emoji-cat-btn" data-category="work" title="Work">💼</button>
+      <button type="button" class="emoji-cat-btn" data-category="travel" title="Travel & Nature">✈️</button>
+      <button type="button" class="emoji-cat-btn" data-category="food" title="Food & Drink">🍜</button>
+      <button type="button" class="emoji-cat-btn" data-category="media" title="Media & Arts">🎵</button>
+      <button type="button" class="emoji-cat-btn" data-category="favorites" title="Favorites">⭐</button>
+    </div>
+    <div class="emoji-picker-grid" id="emoji-picker-grid">
+      <!-- Dynamically populated emoji list -->
+    </div>
+  </div>
 
   <!-- JS Logic -->
   <script type="module" src="app.js"></script>

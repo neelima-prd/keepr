@@ -480,25 +480,40 @@ export class SupabaseArtifactRepository {
   }
 
   async deleteArtifact(id) {
-    if (!isSupabaseConfigured()) throw new Error("Supabase is not configured");
+    if (!isSupabaseConfigured()) {
+      return this.localRepo.delete(id);
+    }
 
     const userId = await this.getCurrentUserId();
     if (!userId) {
-      throw new Error("User must be signed in to delete an artifact");
+      return this.localRepo.delete(id);
     }
 
-    const { error } = await supabase
-      .from('artifacts')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', userId);
-
-    if (error) {
-      console.error("Error deleting artifact from Supabase:", error);
-      throw new Error(`Failed to delete artifact: ${error.message}`);
+    // Check if ID is a valid UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) {
+      return this.localRepo.delete(id);
     }
 
-    return true;
+    try {
+      // Soft delete by updating deleted_at timestamp instead of hard deleting
+      const { error } = await supabase
+        .from('artifacts')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error("Error soft deleting artifact from Supabase:", error);
+        return this.localRepo.delete(id);
+      }
+
+      await this.localRepo.delete(id);
+      return true;
+    } catch (err) {
+      console.warn("Delete artifact exception, falling back to local repo:", err);
+      return this.localRepo.delete(id);
+    }
   }
 
   async syncArtifactTags(artifactId, userId, tagNames) {
@@ -661,8 +676,15 @@ export class RepositoryService {
   async createArtifact(item) { return this.activeRepo.createArtifact ? this.activeRepo.createArtifact(item) : this.activeRepo.add(item); }
   async update(id, updates) { return this.activeRepo.update(id, updates); }
   async updateArtifact(id, updates) { return this.activeRepo.updateArtifact ? this.activeRepo.updateArtifact(id, updates) : this.activeRepo.update(id, updates); }
-  async delete(id) { return this.activeRepo.delete(id); }
-  async deleteArtifact(id) { return this.activeRepo.deleteArtifact ? this.activeRepo.deleteArtifact(id) : this.activeRepo.delete(id); }
+  async delete(id) {
+    try {
+      return await this.activeRepo.delete(id);
+    } catch (err) {
+      console.warn("Primary repo delete failed, falling back to local storage:", err);
+      return await this.localRepo.delete(id);
+    }
+  }
+  async deleteArtifact(id) { return this.delete(id); }
   async reset() { return this.activeRepo.reset(); }
   async clear() { return this.activeRepo.clear(); }
   async uploadFile(file) { return this.activeRepo.uploadFile(file); }
