@@ -8,11 +8,11 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif;
   
   /* Brand Identity Colors & Tokens */
-  --brand-primary: #10B981; /* Keepr Green */
-  --brand-primary-hover: #059669;
-  --brand-primary-light: rgba(16, 185, 129, 0.12);
-  --brand-primary-fill: rgba(16, 185, 129, 0.15);
-  --brand-primary-border: rgba(16, 185, 129, 0.25);
+  --brand-primary: var(--color-primary);
+  --brand-primary-hover: var(--color-primary-hover);
+  --brand-primary-light: var(--color-primary-light);
+  --brand-primary-fill: var(--color-primary-light);
+  --brand-primary-border: var(--color-border-hover);
   --color-keepr-green: var(--brand-primary);
   --color-keepr-green-fill: var(--brand-primary-fill);
 
@@ -2807,7 +2807,7 @@ input:checked + .slider:before {
   justify-content: center;
   border-radius: 50%;
   border: 1px solid var(--brand-primary-border) !important;
-  box-shadow: 0 4px 20px -2px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 4px 20px -2px var(--brand-primary-light);
   transition: transform var(--transition-normal);
 }
 
