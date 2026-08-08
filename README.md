@@ -72,49 +72,6 @@ The PostgreSQL database schema is defined in `supabase-schema.sql`:
 
 ---
 
-## Local Development
-
-### Installation
-
-```bash
-# Clone repository
-git clone https://github.com/your-username/keepr.git
-cd keepr
-
-# Install dependencies
-npm install
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and populate your Supabase credentials:
-
-```bash
-cp .env.example .env
-```
-
-```env
-VITE_SUPABASE_URL="https://your-supabase-project.supabase.co"
-VITE_SUPABASE_ANON_KEY="your-supabase-anon-key"
-```
-
-### Running Locally
-
-```bash
-# Start development server on port 3000
-npm run dev
-```
-
-Open `http://localhost:3000` in your browser.
-
----
-
-## Deployment
-
-For complete, step-by-step production deployment instructions, refer to **[DEPLOYMENT.md](DEPLOYMENT.md)**.
-
----
-
 ## Roadmap
 
 Future planned features under consideration for upcoming releases:
