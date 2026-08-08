@@ -117,6 +117,13 @@ function handlePopState(e) {
 
 function initRouter() {
   const handleHash = () => {
+    const rawHash = window.location.hash || "#home";
+
+    // Allow Supabase SDK to parse session / error / recovery from URL hash before replacing route
+    if (rawHash.includes("access_token=") || rawHash.includes("type=") || rawHash.includes("error=")) {
+      return;
+    }
+
     if (!currentUser) {
       showAuthView();
       return;
@@ -124,8 +131,7 @@ function initRouter() {
 
     closeAllOverlayDrawers();
 
-    const hash = window.location.hash || "#home";
-    const tabName = hash.substring(1);
+    const tabName = rawHash.substring(1);
     
     // Validate tab
     const tabs = ["home", "search", "settings"];
@@ -191,10 +197,15 @@ function navigateToTab(tabName) {
 async function initAuth() {
   if (isSupabaseConfigured()) {
     try {
+      checkUrlAuthParams();
+
       const { data: { session } } = await supabase.auth.getSession();
       handleSessionState(session);
 
-      supabase.auth.onAuthStateChange((_event, session) => {
+      supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          showPasswordResetModal();
+        }
         handleSessionState(session);
       });
     } catch (e) {
@@ -217,6 +228,67 @@ async function initAuth() {
   }
 
   setupAuthUI();
+}
+
+function checkUrlAuthParams() {
+  const hash = window.location.hash || "";
+  const search = window.location.search || "";
+  const rawParams = hash.substring(1) || search.substring(1);
+  if (!rawParams) return;
+
+  const params = new URLSearchParams(rawParams);
+  const errorDesc = params.get("error_description");
+  const errorMsg = params.get("error");
+  const type = params.get("type");
+
+  if (errorDesc || errorMsg) {
+    const cleanMsg = errorDesc ? decodeURIComponent(errorDesc.replace(/\+/g, " ")) : errorMsg;
+    setTimeout(() => {
+      showAuthAlert(cleanMsg, "error");
+    }, 150);
+  } else if (type === "recovery" || hash.includes("type=recovery")) {
+    setTimeout(() => {
+      showPasswordResetModal();
+    }, 200);
+  }
+}
+
+function showPasswordResetModal() {
+  const modal = document.getElementById("password-reset-modal");
+  if (modal) {
+    modal.classList.add("active");
+    const input = document.getElementById("reset-input-password");
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    hideResetPasswordAlert();
+  }
+}
+
+function closePasswordResetModal() {
+  const modal = document.getElementById("password-reset-modal");
+  if (modal) {
+    modal.classList.remove("active");
+    hideResetPasswordAlert();
+  }
+  if (window.location.hash.includes("recovery")) {
+    window.location.hash = "#home";
+  }
+}
+
+function showResetPasswordAlert(msg, type = "error") {
+  const el = document.getElementById("password-reset-alert");
+  if (el) {
+    el.className = `auth-alert ${type}`;
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+}
+
+function hideResetPasswordAlert() {
+  const el = document.getElementById("password-reset-alert");
+  if (el) el.style.display = "none";
 }
 
 async function handleSessionState(session) {
@@ -538,7 +610,8 @@ function setupAuthUI() {
               email: emailVal,
               password: passVal,
               options: {
-                data: { full_name: nameVal }
+                data: { full_name: nameVal },
+                emailRedirectTo: window.location.origin
               }
             });
             if (error) {
@@ -601,6 +674,48 @@ function setupAuthUI() {
   }
 
   setupProfileDropdown();
+
+  // Password Reset Modal Controls
+  const btnCloseReset = document.getElementById("btn-close-password-reset");
+  if (btnCloseReset) {
+    btnCloseReset.addEventListener("click", () => closePasswordResetModal());
+  }
+
+  const resetForm = document.getElementById("password-reset-form");
+  if (resetForm) {
+    resetForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideResetPasswordAlert();
+
+      const newPass = document.getElementById("reset-input-password")?.value || "";
+      if (!newPass || newPass.length < 6) {
+        showResetPasswordAlert("Password must be at least 6 characters long.", "error");
+        return;
+      }
+
+      const submitBtn = document.getElementById("btn-submit-password-reset");
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        if (isSupabaseConfigured()) {
+          const { error } = await supabase.auth.updateUser({ password: newPass });
+          if (error) {
+            showResetPasswordAlert(error.message, "error");
+          } else {
+            closePasswordResetModal();
+            showToast("Password updated successfully!", "success");
+          }
+        } else {
+          closePasswordResetModal();
+          showToast("Demo password updated successfully!", "success");
+        }
+      } catch (err) {
+        showResetPasswordAlert(err.message || "Failed to update password", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
 }
 
 async function handleSignOut() {

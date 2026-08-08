@@ -498,6 +498,35 @@
     </div>
   </div>
 
+  <!-- PASSWORD RESET MODAL -->
+  <div class="modal-backdrop" id="password-reset-modal">
+    <div class="modal-card" style="max-width: 420px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Set New Password</h2>
+        <button class="modal-close-btn" id="btn-close-password-reset" type="button">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <form id="password-reset-form" style="margin-top: 16px;">
+        <p style="font-size: 0.9rem; color: var(--color-text-secondary); margin-bottom: 16px;">
+          Enter your new password below to update your account security.
+        </p>
+        <div id="password-reset-alert" class="auth-alert" style="display: none; margin-bottom: 12px;"></div>
+        <div class="form-field">
+          <label class="field-label" for="reset-input-password">New Password</label>
+          <input type="password" id="reset-input-password" class="auth-input" placeholder="••••••••" required minlength="6">
+        </div>
+        <div class="modal-footer-actions" style="margin-top: 20px;">
+          <div class="footer-buttons" style="display: flex; gap: 10px; width: 100%; justify-content: flex-end;">
+            <button class="btn btn-primary btn-block" type="submit" id="btn-submit-password-reset">
+              <span>Update Password</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- DETAIL DRAWER -->
   <div class="drawer-backdrop" id="detail-drawer">
     <div class="drawer-panel">
