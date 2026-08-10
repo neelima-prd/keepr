@@ -2320,11 +2320,14 @@ function forceCloseKeepModal() {
   if (form) form.reset();
   const previews = document.getElementById("capture-previews");
   if (previews) previews.innerHTML = "";
+  const newTagInput = document.getElementById("new-tag-input");
+  if (newTagInput) newTagInput.value = "";
   clearModalStatusError();
 }
 
 function renderModalTagSelectors() {
   const container = document.getElementById("keep-tags-selector");
+  if (!container) return;
   container.innerHTML = "";
   
   // Fetch existing tags
@@ -2337,7 +2340,7 @@ function renderModalTagSelectors() {
   displayTags.forEach(tag => {
     const chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "chip-tag-select";
+    chip.className = `chip-tag-select ${selectedModalTags.includes(tag) ? 'selected' : ''}`;
     chip.textContent = tag;
     
     chip.addEventListener("click", () => {
@@ -2409,6 +2412,13 @@ async function handleKeepItemSubmit(e) {
   e.preventDefault();
 
   if (isSavingKeep) return;
+
+  // Auto-commit uncommitted tag from input if present
+  const newTagInput = document.getElementById("new-tag-input");
+  if (newTagInput && newTagInput.value.trim()) {
+    addNewTagToModal(newTagInput.value.trim());
+    newTagInput.value = "";
+  }
 
   const editorEl = document.getElementById("keep-capture-editor");
   const rawHtml = editorEl ? editorEl.innerHTML.trim() : "";
@@ -2563,6 +2573,9 @@ function openDetailDrawer(item) {
     ...item,
     tags: Array.isArray(item.tags) ? [...item.tags] : []
   };
+
+  const tagInputEl = document.getElementById("detail-new-tag");
+  if (tagInputEl) tagInputEl.value = "";
   
   const drawer = document.getElementById("detail-drawer");
   drawer.classList.add("active");
@@ -2607,13 +2620,15 @@ function openDetailDrawer(item) {
   // Render Rich Preview Area
   renderDetailPreview(item);
 
-  lucide.createIcons();
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function closeDetailDrawer() {
   const drawer = document.getElementById("detail-drawer");
   if (drawer) drawer.classList.remove("active");
   currentDetailItem = null;
+  const tagInputEl = document.getElementById("detail-new-tag");
+  if (tagInputEl) tagInputEl.value = "";
   if (currentUser && detailOriginTab && currentTab !== detailOriginTab) {
     window.location.hash = `#${detailOriginTab}`;
     navigateToTab(detailOriginTab);
@@ -2734,6 +2749,17 @@ async function handleSaveDetailChanges(e) {
   e.preventDefault();
   if (!currentDetailItem) return;
 
+  // Auto-commit any uncommitted tag typed in detail-new-tag
+  const detailTagInput = document.getElementById("detail-new-tag");
+  if (detailTagInput && detailTagInput.value.trim()) {
+    const val = detailTagInput.value.trim();
+    if (!currentDetailItem.tags) currentDetailItem.tags = [];
+    if (!currentDetailItem.tags.includes(val)) {
+      currentDetailItem.tags.push(val);
+    }
+    detailTagInput.value = "";
+  }
+
   const detailNoteEl = document.getElementById("detail-note");
   const rawContent = detailNoteEl ? detailNoteEl.innerHTML.trim() : "";
   const noteContent = sanitizeAndFormatHtml(rawContent);
@@ -2745,28 +2771,30 @@ async function handleSaveDetailChanges(e) {
     return;
   }
 
+  const tagsToSave = Array.isArray(currentDetailItem.tags) ? [...currentDetailItem.tags] : [];
+
   // Locate in DB
   const dbIndex = database.findIndex(item => item.id === currentDetailItem.id);
-  if (dbIndex === -1) return;
-
-  // Update properties
-  database[dbIndex].content = noteContent;
-  database[dbIndex].url = urlVal;
-  database[dbIndex].tags = [...currentDetailItem.tags];
-  database[dbIndex].updatedAt = Date.now();
-
-  let newTitle = database[dbIndex].title;
-  if (database[dbIndex].type === "note") {
-    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    newTitle = noteLines[0] || database[dbIndex].title || "Kept note";
-  } else if (database[dbIndex].type === "link") {
-    newTitle = plainText.split("\n")[0].substring(0, 45);
-    if (newTitle.length >= 45) newTitle += "...";
-    newTitle = newTitle || database[dbIndex].title || "Saved link";
+  if (dbIndex !== -1) {
+    database[dbIndex].content = noteContent;
+    database[dbIndex].url = urlVal;
+    database[dbIndex].tags = [...tagsToSave];
+    database[dbIndex].updatedAt = Date.now();
   }
 
-  let domainVal = database[dbIndex].domain;
-  if (urlVal && database[dbIndex].type === "link") {
+  let newTitle = currentDetailItem.title;
+  if (currentDetailItem.type === "note") {
+    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    newTitle = noteLines[0] || currentDetailItem.title || "Kept note";
+  } else if (currentDetailItem.type === "link") {
+    newTitle = plainText.split("\n")[0].substring(0, 45);
+    if (newTitle.length >= 45) newTitle += "...";
+    newTitle = newTitle || currentDetailItem.title || "Saved link";
+  }
+  if (dbIndex !== -1) database[dbIndex].title = newTitle;
+
+  let domainVal = currentDetailItem.domain;
+  if (urlVal && currentDetailItem.type === "link") {
     try {
       const hostname = new URL(urlVal).hostname;
       domainVal = hostname.replace("www.", "");
@@ -2774,19 +2802,23 @@ async function handleSaveDetailChanges(e) {
       domainVal = "Link Source";
     }
   }
+  if (dbIndex !== -1) database[dbIndex].domain = domainVal;
 
   await repository.update(currentDetailItem.id, {
     content: noteContent,
     url: urlVal,
-    tags: [...currentDetailItem.tags],
+    tags: tagsToSave,
     title: newTitle,
     domain: domainVal
   });
 
-  database = await repository.getAll();
+  const latest = await repository.getAll();
+  if (latest && Array.isArray(latest) && latest.length > 0) {
+    database = latest;
+  }
   closeDetailDrawer();
   renderAll();
-  lucide.createIcons();
+  if (window.lucide) window.lucide.createIcons();
   showToast("Saved changes", "success");
 }
 

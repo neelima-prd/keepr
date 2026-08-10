@@ -271,6 +271,22 @@ export class SupabaseArtifactRepository {
       }
     }
 
+    const extractTagName = (at) => {
+      if (!at) return null;
+      if (typeof at === 'string') return at;
+      if (at.tags) {
+        if (typeof at.tags === 'string') return at.tags;
+        if (Array.isArray(at.tags)) return at.tags[0]?.name || null;
+        if (typeof at.tags === 'object') return at.tags.name || null;
+      }
+      if (at.name) return at.name;
+      return null;
+    };
+
+    const parsedTags = Array.isArray(row.artifact_tags)
+      ? row.artifact_tags.map(extractTagName).filter(Boolean)
+      : [];
+
     return {
       id: row.id,
       title: row.title || '',
@@ -287,7 +303,7 @@ export class SupabaseArtifactRepository {
       fileName: metadata.file_name || '',
       createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
       updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
-      tags: row.artifact_tags ? row.artifact_tags.map(at => at.tags?.name).filter(Boolean) : []
+      tags: [...new Set(parsedTags)]
     };
   }
 
