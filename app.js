@@ -202,9 +202,12 @@ async function initAuth() {
       const { data: { session } } = await supabase.auth.getSession();
       handleSessionState(session);
 
-      supabase.auth.onAuthStateChange((event, session) => {
+      supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'PASSWORD_RECOVERY') {
           showPasswordResetModal();
+        }
+        if (session && session.user) {
+          await ensureUserProfileExists(session.user);
         }
         handleSessionState(session);
       });
@@ -291,6 +294,44 @@ function hideResetPasswordAlert() {
   if (el) el.style.display = "none";
 }
 
+async function ensureUserProfileExists(user) {
+  if (!user || !user.id || !isSupabaseConfigured()) return;
+  try {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (!profile) {
+      const pendingName = localStorage.getItem('keepr_user_pending_name') || localStorage.getItem(`keepr_user_name_${user.id}`);
+      const fullName = user.user_metadata?.full_name || user.user_metadata?.display_name || user.user_metadata?.name || pendingName || (user.email ? user.email.split("@")[0] : "User");
+      const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
+
+      const fullPayload = {
+        id: user.id,
+        email: user.email || '',
+        full_name: fullName,
+        display_name: fullName,
+        avatar_url: avatarUrl,
+        updated_at: new Date().toISOString()
+      };
+
+      const { error: upsertError } = await supabase.from("profiles").upsert(fullPayload, { onConflict: "id" });
+      if (upsertError) {
+        await supabase.from("profiles").upsert({
+          id: user.id,
+          display_name: fullName,
+          avatar_url: avatarUrl,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "id" });
+      }
+    }
+  } catch (err) {
+    console.warn("Error ensuring user profile exists:", err);
+  }
+}
+
 async function handleSessionState(session) {
   currentSession = session;
   currentUser = session ? session.user : null;
@@ -308,6 +349,7 @@ async function handleSessionState(session) {
 
   if (currentUser) {
     if (currentUser.id) {
+      await ensureUserProfileExists(currentUser);
       const pendingName = localStorage.getItem('keepr_user_pending_name');
       if (pendingName) {
         localStorage.setItem(`keepr_user_name_${currentUser.id}`, pendingName);
@@ -586,6 +628,9 @@ function setupAuthUI() {
             if (error) {
               showAuthAlert(error.message, "error");
             } else {
+              if (data?.user) {
+                await ensureUserProfileExists(data.user);
+              }
               showToast("Signed in successfully", "success");
             }
           } else {
@@ -621,6 +666,7 @@ function setupAuthUI() {
                 if (nameVal) {
                   localStorage.setItem(`keepr_user_name_${data.user.id}`, nameVal);
                 }
+                await ensureUserProfileExists(data.user);
               }
               if (data?.user && !data?.session) {
                 showAuthAlert("Account created! Check your email to confirm your account.", "success");
@@ -1059,13 +1105,31 @@ function getCardAccentClass(item) {
   }
 }
 
+function extractTextLinesFromHtml(html) {
+  if (!html) return [];
+  let formatted = String(html)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h1|h2|h3|h4|h5|h6|blockquote|tr)>/gi, "\n")
+    .replace(/<(p|div|li|h1|h2|h3|h4|h5|h6|blockquote|tr)[^>]*>/gi, "\n");
+  
+  const tmp = document.createElement("div");
+  tmp.innerHTML = formatted;
+  let rawText = (tmp.textContent || tmp.innerText || "");
+
+  if (rawText.includes("<") && rawText.includes(">")) {
+    tmp.innerHTML = rawText;
+    rawText = (tmp.textContent || tmp.innerText || "");
+  }
+
+  return rawText
+    .split(/\r?\n/)
+    .map(line => line.replace(/\uA0/g, ' ').trim())
+    .filter(line => line.length > 0);
+}
+
 function extractNoteTitleAndPreview(item) {
   const content = item.content || "";
-  const textWithNewlines = content
-    .replace(/<\/(p|div|li|h1|h2|h3|h4|h5|h6)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n");
-  const plainText = stripHtml(textWithNewlines);
-  const lines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const lines = extractTextLinesFromHtml(content);
 
   let title = "";
   let preview = "";
@@ -1078,7 +1142,7 @@ function extractNoteTitleAndPreview(item) {
       preview = ""; // If only one line exists: No duplicate preview
     }
   } else {
-    title = item.title && item.title.trim() ? item.title.trim() : "Untitled note";
+    title = item.title && item.title.trim() ? item.title.trim() : (item.type === "quote" ? "Saved quote" : "Untitled note");
     preview = "";
   }
 
@@ -1086,8 +1150,10 @@ function extractNoteTitleAndPreview(item) {
 }
 
 function getArtifactTitle(item) {
-  if (item.type === "note") {
-    return extractNoteTitleAndPreview(item).title;
+  if (item.type === "note" || item.type === "quote") {
+    const { title } = extractNoteTitleAndPreview(item);
+    if (title) return title;
+    return item.title && item.title.trim() ? item.title.trim() : (item.type === "quote" ? "Saved quote" : "Untitled note");
   }
   if (item.title && item.title.trim()) {
     return item.title.trim();
@@ -1118,7 +1184,8 @@ function createCardElement(item) {
   const iconName = getTypeIcon(item.type);
   const typeLabel = item.type.toUpperCase();
   const relativeTime = formatRelativeTime(item.createdAt);
-  const primaryTag = item.tags && item.tags.length > 0 ? item.tags[0] : "";
+  const itemTags = (item.tags && Array.isArray(item.tags)) ? item.tags.filter(t => t && t.trim()) : [];
+  const tagsHtml = itemTags.map(t => `<span class="card-tag">${escapeHtml(t)}</span>`).join('');
 
   let customBodyHtml = "";
 
@@ -1185,10 +1252,10 @@ function createCardElement(item) {
         <span class="card-date" style="background: rgba(255,255,255,0.92); backdrop-filter: blur(4px); border: 1px solid rgba(0,0,0,0.06); color: #222; padding: 3px 8px; border-radius: 9999px;">${relativeTime}</span>
       </div>
       ${customBodyHtml}
-      ${primaryTag ? `
+      ${tagsHtml ? `
         <div style="padding: 0 16px 12px 16px; width: 100%;">
-          <div class="card-meta" style="margin-top: 4px; padding-top: 0; border-top: none; justify-content: flex-end;">
-            <span class="card-tag">${primaryTag}</span>
+          <div class="card-meta" style="margin-top: 4px; padding-top: 0; border-top: none; justify-content: flex-end; gap: 4px; flex-wrap: wrap;">
+            ${tagsHtml}
           </div>
         </div>
       ` : ''}
@@ -1205,9 +1272,9 @@ function createCardElement(item) {
         </div>
         ${customBodyHtml}
       </div>
-      ${primaryTag ? `
-        <div class="card-meta">
-          <span class="card-tag" style="margin-left: auto;">${primaryTag}</span>
+      ${tagsHtml ? `
+        <div class="card-meta" style="justify-content: flex-end; gap: 4px; flex-wrap: wrap;">
+          ${tagsHtml}
         </div>
       ` : ''}
     `;
@@ -1672,6 +1739,83 @@ function registerEventListeners() {
   if (skipMigrateBtn) skipMigrateBtn.addEventListener("click", handleSkipMigration);
   if (skipMigrateXBtn) skipMigrateXBtn.addEventListener("click", handleSkipMigration);
 
+  const migrationModalEl = document.getElementById("migration-modal");
+  if (migrationModalEl) {
+    migrationModalEl.addEventListener("click", (e) => {
+      if (e.target.id === "migration-modal") handleSkipMigration();
+    });
+  }
+
+  // Continuous checklist & blockquote behaviour in editors
+  const handleEditorKeyDown = (e) => {
+    if (e.key === "Enter") {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return;
+      const node = sel.anchorNode;
+
+      // Handle blockquote double-enter exit
+      const bq = node.nodeType === 3 ? node.parentNode.closest("blockquote") : (node.closest ? node.closest("blockquote") : null);
+      if (bq) {
+        let currentBlock = node.nodeType === 3 ? node.parentNode : node;
+        const lineText = currentBlock.textContent.replace(/[\n\r\t\uA0]/g, "").trim();
+        if (lineText === "" || currentBlock === bq && bq.textContent.trim() === "") {
+          e.preventDefault();
+          if (currentBlock !== bq) {
+            currentBlock.remove();
+          }
+          const p = document.createElement("div");
+          p.innerHTML = "<br>";
+          if (bq.nextSibling) {
+            bq.parentNode.insertBefore(p, bq.nextSibling);
+          } else {
+            bq.parentNode.appendChild(p);
+          }
+          if (bq.textContent.trim() === "") {
+            bq.remove();
+          }
+          const range = document.createRange();
+          range.setStart(p, 0);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+      }
+
+      // Handle checklist items
+      const li = node.nodeType === 3 ? node.parentNode.closest("li") : (node.closest ? node.closest("li") : null);
+      if (li && li.closest(".checklist")) {
+        const text = li.textContent.replace(/[\n\r\t]/g, "").trim();
+        if (text === "") {
+          e.preventDefault();
+          const ul = li.closest(".checklist");
+          li.remove();
+          if (ul && ul.children.length === 0) {
+            ul.remove();
+          }
+          document.execCommand("insertParagraph", false, null);
+        } else {
+          e.preventDefault();
+          const newLi = document.createElement("li");
+          newLi.innerHTML = '<input type="checkbox" contenteditable="false"> &nbsp;';
+          if (li.nextSibling) {
+            li.parentNode.insertBefore(newLi, li.nextSibling);
+          } else {
+            li.parentNode.appendChild(newLi);
+          }
+          const range = document.createRange();
+          range.setStart(newLi, 1);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    }
+  };
+
+  document.getElementById("keep-capture-editor")?.addEventListener("keydown", handleEditorKeyDown);
+  document.getElementById("detail-note")?.addEventListener("keydown", handleEditorKeyDown);
+
   // Keyboard Shortcuts
   window.addEventListener("keydown", handleKeyboardShortcuts);
 }
@@ -2118,6 +2262,11 @@ function renderCapturePreviews() {
 }
 
 function openKeepModal() {
+  const migrationModal = document.getElementById("migration-modal");
+  if (migrationModal && migrationModal.classList.contains("active")) {
+    return;
+  }
+
   const modal = document.getElementById("keep-modal");
   modal.classList.add("active");
   selectedModalTags = [];
@@ -2208,27 +2357,39 @@ function renderModalTagSelectors() {
 }
 
 function addNewTagToModal(tag) {
-  if (!selectedModalTags.includes(tag)) {
-    selectedModalTags.push(tag);
+  if (!tag || !tag.trim()) return;
+  const cleanTag = tag.trim();
+
+  if (!selectedModalTags.includes(cleanTag)) {
+    selectedModalTags.push(cleanTag);
     
-    // Dynamically append selected chip to selector
     const container = document.getElementById("keep-tags-selector");
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip-tag-select selected";
-    chip.textContent = tag;
-    chip.addEventListener("click", () => {
-      const idx = selectedModalTags.indexOf(tag);
-      if (idx > -1) {
-        selectedModalTags.splice(idx, 1);
-        chip.classList.remove("selected");
+    if (container) {
+      // Check if chip already exists in container
+      const existingChips = Array.from(container.querySelectorAll(".chip-tag-select"));
+      const existing = existingChips.find(c => c.textContent.trim().toLowerCase() === cleanTag.toLowerCase());
+      
+      if (existing) {
+        existing.classList.add("selected");
       } else {
-        selectedModalTags.push(tag);
-        chip.classList.add("selected");
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip-tag-select selected";
+        chip.textContent = cleanTag;
+        chip.addEventListener("click", () => {
+          const idx = selectedModalTags.indexOf(cleanTag);
+          if (idx > -1) {
+            selectedModalTags.splice(idx, 1);
+            chip.classList.remove("selected");
+          } else {
+            selectedModalTags.push(cleanTag);
+            chip.classList.add("selected");
+          }
+          updateModalStatus();
+        });
+        container.appendChild(chip);
       }
-      updateModalStatus();
-    });
-    container.appendChild(chip);
+    }
     updateModalStatus();
   }
 }
@@ -2398,7 +2559,10 @@ async function handleKeepItemSubmit(e) {
  * ------------------------------------------------------------- */
 function openDetailDrawer(item) {
   detailOriginTab = currentTab || "home";
-  currentDetailItem = { ...item }; // Clone item state
+  currentDetailItem = {
+    ...item,
+    tags: Array.isArray(item.tags) ? [...item.tags] : []
+  };
   
   const drawer = document.getElementById("detail-drawer");
   drawer.classList.add("active");
@@ -2426,7 +2590,7 @@ function openDetailDrawer(item) {
   
   const urlSection = document.getElementById("detail-url-section");
   const visitLink = document.getElementById("detail-visit-link");
-  if (item.type === "link" || item.url) {
+  if ((item.type === "link" || item.url) && item.source !== "upload" && !item.storagePath && item.type !== "image" && item.type !== "pdf" && item.type !== "file") {
     urlSection.style.display = "flex";
     visitLink.href = item.url;
   } else {
@@ -2524,8 +2688,18 @@ function renderDetailPreview(item) {
     container.innerHTML = `
       <div class="preview-image-box">
         <img class="preview-image-media" src="${imgUrl}" alt="${escapeHtml(title)}">
-        <div class="preview-image-info">
-          <span class="preview-image-title">${escapeHtml(title)}</span>
+        <div class="preview-image-info" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--color-border);">
+          <span class="preview-image-title" style="font-size: 0.95rem; font-weight: 600; color: var(--color-text); word-break: break-all; flex: 1;">${escapeHtml(title)}</span>
+          ${imgUrl && imgUrl !== '#' ? `
+            <div style="display: flex; gap: 8px; flex-shrink: 0;">
+              <a class="btn btn-secondary btn-sm" href="${imgUrl}" target="_blank" rel="noopener" style="text-decoration: none;">
+                <i data-lucide="eye"></i><span>Preview</span>
+              </a>
+              <a class="btn btn-secondary btn-sm" href="${imgUrl}" download="${escapeHtml(title || 'image')}" style="text-decoration: none;">
+                <i data-lucide="download"></i><span>Download</span>
+              </a>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -2537,13 +2711,19 @@ function renderDetailPreview(item) {
         <div class="pdf-icon-wrap">${docLabel}</div>
         <div class="pdf-details">
           <span class="pdf-name">${escapeHtml(title)}</span>
-          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'PDF Document'}</span>
+          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'Document'}</span>
         </div>
         ${fileLink && fileLink !== '#' ? `
-          <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" download="${escapeHtml(title)}">
-            <i data-lucide="download"></i>
-            <span>Open</span>
-          </a>
+          <div style="display: flex; gap: 8px;">
+            <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" rel="noopener">
+              <i data-lucide="eye"></i>
+              <span>Preview</span>
+            </a>
+            <a class="btn btn-secondary btn-sm" href="${fileLink}" download="${escapeHtml(title || 'document')}">
+              <i data-lucide="download"></i>
+              <span>Download</span>
+            </a>
+          </div>
         ` : ''}
       </div>
     `;
@@ -2660,6 +2840,9 @@ function checkAndShowMigrationDialog() {
   try {
     const localItems = JSON.parse(localRaw);
     if (Array.isArray(localItems) && localItems.length > 0) {
+      if (database && database.length > 0) {
+        return; // User already has artifacts in active cloud database
+      }
       const modal = document.getElementById("migration-modal");
       if (modal) {
         const descEl = document.getElementById("migration-modal-desc");
@@ -2717,6 +2900,15 @@ async function handleImportMigration() {
   } catch (e) {
     localItems = [];
   }
+
+  // Filter out any accidentally saved import dialog copy artifacts
+  localItems = localItems.filter(item => {
+    const title = (item.title || "").toLowerCase();
+    const content = (item.content || "").toLowerCase();
+    return !title.includes("import your existing memories") && 
+           !title.includes("cloud import") &&
+           !content.includes("we found memories saved locally");
+  });
 
   if (localItems.length === 0) {
     localStorage.setItem("keepr_migration_handled", "true");

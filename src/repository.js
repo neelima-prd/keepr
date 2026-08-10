@@ -120,14 +120,15 @@ export class LocalStorageArtifactRepository {
   async getAll() {
     const raw = localStorage.getItem(this.storageKey);
     if (!raw) {
-      const items = [...INITIAL_DATA];
+      const items = JSON.parse(JSON.stringify(INITIAL_DATA));
       await this.saveAll(items);
       return items;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : JSON.parse(JSON.stringify(INITIAL_DATA));
     } catch (e) {
-      return [...INITIAL_DATA];
+      return JSON.parse(JSON.stringify(INITIAL_DATA));
     }
   }
 
@@ -147,9 +148,13 @@ export class LocalStorageArtifactRepository {
 
   async add(item) {
     const items = await this.getAll();
-    items.unshift(item);
+    const newItem = {
+      ...item,
+      tags: Array.isArray(item.tags) ? [...item.tags] : []
+    };
+    items.unshift(newItem);
     await this.saveAll(items);
-    return item;
+    return newItem;
   }
 
   async createArtifact(item) {
@@ -160,7 +165,8 @@ export class LocalStorageArtifactRepository {
     const items = await this.getAll();
     const index = items.findIndex(item => item.id === id);
     if (index === -1) return null;
-    items[index] = { ...items[index], ...updates, updatedAt: Date.now() };
+    const updatedTags = updates.tags !== undefined ? (Array.isArray(updates.tags) ? [...updates.tags] : []) : (items[index].tags || []);
+    items[index] = { ...items[index], ...updates, tags: updatedTags, updatedAt: Date.now() };
     await this.saveAll(items);
     return items[index];
   }
@@ -517,13 +523,19 @@ export class SupabaseArtifactRepository {
   }
 
   async syncArtifactTags(artifactId, userId, tagNames) {
+    if (!artifactId || !userId || !Array.isArray(tagNames)) return;
+
+    // Check if artifactId is a valid UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(artifactId);
+    if (!isUuid) return;
+
+    // Deduplicate and clean tag names
+    const cleanTagNames = [...new Set(tagNames.map(t => typeof t === 'string' ? t.trim() : '').filter(Boolean))];
+
     try {
       await supabase.from('artifact_tags').delete().eq('artifact_id', artifactId);
 
-      for (const tagName of tagNames) {
-        if (!tagName || !tagName.trim()) continue;
-        const cleanTagName = tagName.trim();
-
+      for (const cleanTagName of cleanTagNames) {
         let tagId = null;
 
         const { data: tagData } = await supabase
