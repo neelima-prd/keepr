@@ -1105,6 +1105,26 @@ function getCardAccentClass(item) {
   }
 }
 
+function cleanTitleText(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/<[^>]*>/g, "")
+    .replace(/^[\s#*_\-~>\u2022\u25E6\u25AA\u25AB\u2013\u2014]+/, "")
+    .replace(/^\[[ xX]?\]\s*/, "")
+    .replace(/[*_~`#]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatTruncatedTitle(titleText, maxChars = 70) {
+  const cleaned = cleanTitleText(titleText);
+  if (!cleaned) return "";
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+  return cleaned.substring(0, maxChars).trim() + "...";
+}
+
 function extractTextLinesFromHtml(html) {
   if (!html) return [];
   let formatted = String(html)
@@ -1131,32 +1151,35 @@ function extractNoteTitleAndPreview(item) {
   const content = item.content || "";
   const lines = extractTextLinesFromHtml(content);
 
-  let title = "";
+  let rawFirstLine = "";
   let preview = "";
 
   if (lines.length > 0) {
-    title = lines[0]; // Treat ONLY the first non-empty line as the title
+    rawFirstLine = lines[0]; // Treat ONLY the first non-empty line as the title source
     if (lines.length > 1) {
-      preview = lines.slice(1).join(" "); // Everything after the first newline becomes the preview
+      preview = lines.slice(1).join(" "); // Everything after the first line becomes the preview
     } else {
-      preview = ""; // If only one line exists: No duplicate preview
+      preview = ""; // If only one line exists
     }
   } else {
-    title = item.title && item.title.trim() ? item.title.trim() : (item.type === "quote" ? "Saved quote" : "Untitled note");
+    rawFirstLine = item.title && item.title.trim() ? item.title.trim() : (item.type === "quote" ? "Saved quote" : "Untitled note");
     preview = "";
   }
 
-  return { title, preview };
+  const cleanedTitle = cleanTitleText(rawFirstLine) || (item.type === "quote" ? "Saved quote" : "Untitled note");
+  const title = formatTruncatedTitle(cleanedTitle, 70);
+
+  return { title, preview, rawTitle: cleanedTitle };
 }
 
 function getArtifactTitle(item) {
   if (item.type === "note" || item.type === "quote") {
     const { title } = extractNoteTitleAndPreview(item);
     if (title) return title;
-    return item.title && item.title.trim() ? item.title.trim() : (item.type === "quote" ? "Saved quote" : "Untitled note");
+    return item.title && item.title.trim() ? formatTruncatedTitle(item.title, 70) : (item.type === "quote" ? "Saved quote" : "Untitled note");
   }
   if (item.title && item.title.trim()) {
-    return item.title.trim();
+    return formatTruncatedTitle(item.title, 70);
   }
   switch (item.type) {
     case "quote":
@@ -1164,10 +1187,10 @@ function getArtifactTitle(item) {
     case "link":
       return "Saved link";
     case "image":
-      return item.fileName ? item.fileName : "Image";
+      return item.fileName ? formatTruncatedTitle(item.fileName, 70) : "Image";
     case "pdf":
     case "file":
-      return item.fileName ? item.fileName : "PDF document";
+      return item.fileName ? formatTruncatedTitle(item.fileName, 70) : "PDF document";
     default:
       return "Untitled note";
   }
@@ -2664,84 +2687,178 @@ function renderDetailTags() {
   }
 }
 
-function renderDetailPreview(item) {
-  const container = document.getElementById("detail-preview-container");
-  container.innerHTML = "";
-  
-  const title = getArtifactTitle(item);
+function getItemImageUrl(item) {
+  if (!item) return "";
+  if (item.imageUrl && String(item.imageUrl).trim() && item.imageUrl !== "#") return String(item.imageUrl).trim();
+  if (item.url && String(item.url).trim() && item.url !== "#") return String(item.url).trim();
+  if (item.storagePath && String(item.storagePath).trim()) return String(item.storagePath).trim();
+  if (item.content && (item.content.startsWith("data:image") || item.content.startsWith("http") || item.content.startsWith("blob:"))) return String(item.content).trim();
+  return "";
+}
 
-  if (item.type === "note" || item.type === "quote") {
-    container.innerHTML = `
-      <div class="preview-note-box">
-        <h3 class="preview-note-title">${escapeHtml(title)}</h3>
-      </div>
-    `;
-  } else if (item.type === "link") {
-    let domainText = item.domain || "";
-    if (!domainText && item.url) {
-      try {
-        domainText = new URL(item.url).hostname.replace("www.", "");
-      } catch (e) {
-        domainText = "";
-      }
-    }
-    container.innerHTML = `
-      <div class="preview-link-box">
-        <div class="preview-link-header">
-          <div class="preview-favicon">
-            <img src="https://www.google.com/s2/favicons?sz=64&domain=${domainText || 'example.com'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23666%22 stroke-width=%222%22><circle cx=%2212%22 cy=%2212%22 r=%2210%22/></svg>'">
-          </div>
-          <div class="preview-link-details">
-            <span class="preview-link-title">${escapeHtml(title)}</span>
-            ${domainText ? `<span class="preview-link-domain">${escapeHtml(domainText)}</span>` : ''}
-          </div>
+function openImageLightbox(imgSrc, imgTitle) {
+  let lightbox = document.getElementById("image-lightbox-modal");
+  if (!lightbox) {
+    lightbox = document.createElement("div");
+    lightbox.id = "image-lightbox-modal";
+    lightbox.className = "modal-backdrop";
+    lightbox.style.zIndex = "10000";
+    lightbox.innerHTML = `
+      <div class="lightbox-card" style="position: relative; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: var(--color-card); border-radius: var(--radius-lg); border: 1px solid var(--color-border); box-shadow: var(--shadow-modal);">
+        <button class="modal-close-btn" id="btn-close-lightbox" type="button" style="position: absolute; top: 12px; right: 12px; z-index: 10;">
+          <i data-lucide="x"></i>
+        </button>
+        <div style="max-height: 72vh; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 100%;">
+          <img id="lightbox-img" src="" alt="" style="max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: var(--radius-md);">
+        </div>
+        <div style="margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border-top: 1px solid var(--color-border); padding-top: 14px;">
+          <span id="lightbox-title" style="font-size: 0.95rem; font-weight: 600; color: var(--color-text); word-break: break-all; flex: 1;"></span>
+          <a id="lightbox-download-link" class="btn btn-primary btn-sm" href="" download="" target="_blank" rel="noopener">
+            <i data-lucide="download"></i><span>Download</span>
+          </a>
         </div>
       </div>
     `;
-  } else if (item.type === "image") {
-    const imgUrl = item.imageUrl || item.url || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
-    container.innerHTML = `
-      <div class="preview-image-box">
-        <img class="preview-image-media" src="${imgUrl}" alt="${escapeHtml(title)}">
-        <div class="preview-image-info" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--color-border);">
-          <span class="preview-image-title" style="font-size: 0.95rem; font-weight: 600; color: var(--color-text); word-break: break-all; flex: 1;">${escapeHtml(title)}</span>
-          ${imgUrl && imgUrl !== '#' ? `
-            <div style="display: flex; gap: 8px; flex-shrink: 0;">
-              <a class="btn btn-secondary btn-sm" href="${imgUrl}" target="_blank" rel="noopener" style="text-decoration: none;">
+    document.body.appendChild(lightbox);
+
+    const closeBtn = lightbox.querySelector("#btn-close-lightbox");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => {
+        lightbox.classList.remove("active");
+      });
+    }
+
+    lightbox.addEventListener("click", (e) => {
+      if (e.target === lightbox) {
+        lightbox.classList.remove("active");
+      }
+    });
+  }
+
+  const imgEl = lightbox.querySelector("#lightbox-img");
+  const titleEl = lightbox.querySelector("#lightbox-title");
+  const downloadLink = lightbox.querySelector("#lightbox-download-link");
+
+  if (imgEl) imgEl.src = imgSrc;
+  if (titleEl) titleEl.textContent = imgTitle || "Image Preview";
+  if (downloadLink) {
+    downloadLink.href = imgSrc;
+    downloadLink.download = imgTitle || "image";
+  }
+
+  lightbox.classList.add("active");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function renderDetailPreview(item) {
+  const container = document.getElementById("detail-preview-container");
+  if (!container) return;
+
+  container.innerHTML = "";
+  
+  const { title, rawTitle } = (item.type === "note" || item.type === "quote")
+    ? extractNoteTitleAndPreview(item)
+    : { title: getArtifactTitle(item), rawTitle: getArtifactTitle(item) };
+
+  if (item.type === "note") {
+    // For standard notes, the note editor (#detail-note) below displays and allows editing the full content.
+    // Hiding the top preview box prevents redundant header boxes that crowd/overlap the Note section.
+    container.style.display = "none";
+  } else {
+    container.style.display = "block";
+
+    if (item.type === "quote") {
+      container.innerHTML = `
+        <div class="rich-quote-preview">
+          <i data-lucide="quote" class="quote-icon"></i>
+          <blockquote class="quote-preview-text">"${escapeHtml(rawTitle || title)}"</blockquote>
+        </div>
+      `;
+    } else if (item.type === "link") {
+      let domainText = item.domain || "";
+      if (!domainText && item.url) {
+        try {
+          domainText = new URL(item.url).hostname.replace("www.", "");
+        } catch (e) {
+          domainText = "";
+        }
+      }
+      container.innerHTML = `
+        <div class="preview-link-box">
+          <div class="preview-link-header">
+            <div class="preview-favicon">
+              <img src="https://www.google.com/s2/favicons?sz=64&domain=${domainText || 'example.com'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23666%22 stroke-width=%222%22><circle cx=%2212%22 cy=%2212%22 r=%2210%22/></svg>'">
+            </div>
+            <div class="preview-link-details">
+              <span class="preview-link-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+              ${domainText ? `<span class="preview-link-domain">${escapeHtml(domainText)}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (item.type === "image") {
+      const rawImgUrl = getItemImageUrl(item);
+      const imgUrl = rawImgUrl || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
+      const displayTitle = title || "Image";
+
+      container.innerHTML = `
+        <div class="preview-image-box">
+          <div class="preview-image-media-wrap">
+            <img class="preview-image-media" src="${escapeHtml(imgUrl)}" alt="${escapeHtml(displayTitle)}" id="detail-preview-img-media">
+          </div>
+          <div class="preview-image-info">
+            <span class="preview-image-title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+            <div class="preview-image-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-image-preview-action">
                 <i data-lucide="eye"></i><span>Preview</span>
-              </a>
-              <a class="btn btn-secondary btn-sm" href="${imgUrl}" download="${escapeHtml(title || 'image')}" style="text-decoration: none;">
+              </button>
+              <a class="btn btn-secondary btn-sm" href="${escapeHtml(rawImgUrl || imgUrl)}" download="${escapeHtml(displayTitle || 'image')}" target="_blank" rel="noopener">
                 <i data-lucide="download"></i><span>Download</span>
               </a>
             </div>
-          ` : ''}
+          </div>
         </div>
-      </div>
-    `;
-  } else if (item.type === "pdf" || item.type === "file") {
-    const docLabel = item.type === "pdf" ? "PDF" : "DOC";
-    const fileLink = item.url || item.imageUrl || "#";
-    container.innerHTML = `
-      <div class="preview-pdf-box">
-        <div class="pdf-icon-wrap">${docLabel}</div>
-        <div class="pdf-details">
-          <span class="pdf-name">${escapeHtml(title)}</span>
-          <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'Document'}</span>
-        </div>
-        ${fileLink && fileLink !== '#' ? `
-          <div style="display: flex; gap: 8px;">
-            <a class="btn btn-secondary btn-sm" href="${fileLink}" target="_blank" rel="noopener">
-              <i data-lucide="eye"></i>
-              <span>Preview</span>
+      `;
+
+      // Attach handlers for preview lightbox
+      const imgMediaEl = document.getElementById("detail-preview-img-media");
+      const previewBtnEl = document.getElementById("btn-image-preview-action");
+
+      const handleOpenPreview = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openImageLightbox(rawImgUrl || imgUrl, displayTitle);
+      };
+
+      if (imgMediaEl) {
+        imgMediaEl.addEventListener("click", handleOpenPreview);
+      }
+      if (previewBtnEl) {
+        previewBtnEl.addEventListener("click", handleOpenPreview);
+      }
+
+    } else if (item.type === "pdf" || item.type === "file") {
+      const docLabel = item.type === "pdf" ? "PDF" : "DOC";
+      const fileLink = item.url || item.imageUrl || item.storagePath || "#";
+      const displayTitle = title || "Document";
+      container.innerHTML = `
+        <div class="preview-pdf-box">
+          <div class="pdf-icon-wrap">${docLabel}</div>
+          <div class="pdf-details">
+            <span class="pdf-name" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+            <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'Document'}</span>
+          </div>
+          <div class="pdf-actions">
+            <a class="btn btn-secondary btn-sm" href="${escapeHtml(fileLink)}" target="_blank" rel="noopener">
+              <i data-lucide="eye"></i><span>Preview</span>
             </a>
-            <a class="btn btn-secondary btn-sm" href="${fileLink}" download="${escapeHtml(title || 'document')}">
-              <i data-lucide="download"></i>
-              <span>Download</span>
+            <a class="btn btn-secondary btn-sm" href="${escapeHtml(fileLink)}" download="${escapeHtml(displayTitle || 'document')}">
+              <i data-lucide="download"></i><span>Download</span>
             </a>
           </div>
-        ` : ''}
-      </div>
-    `;
+        </div>
+      `;
+    }
   }
 }
 
