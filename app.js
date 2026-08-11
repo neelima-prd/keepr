@@ -1029,21 +1029,29 @@ function extractUrls(text) {
   return matches ? [...new Set(matches)] : [];
 }
 
+function formatFileSize(bytes) {
+  if (!bytes || isNaN(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function getFilePreviewIcon(file) {
-  const ext = file.name.split(".").pop().toLowerCase();
+  const ext = file.name ? file.name.split(".").pop().toLowerCase() : "";
   if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) return "🖼";
   if (ext === "pdf") return "📄";
-  if (["doc", "docx", "txt"].includes(ext)) return "📄";
-  return "📊";
+  if (["doc", "docx"].includes(ext)) return "📝";
+  if (["txt", "md"].includes(ext)) return "📋";
+  return "📄";
 }
 
 function isImageFile(file) {
-  const ext = file.name.split(".").pop().toLowerCase();
-  return ["png", "jpg", "jpeg", "webp", "gif"].includes(ext) || file.type.startsWith("image/");
+  const ext = file.name ? file.name.split(".").pop().toLowerCase() : "";
+  return ["png", "jpg", "jpeg", "webp", "gif"].includes(ext) || (file.type && file.type.startsWith("image/"));
 }
 
 function isPdfFile(file) {
-  const ext = file.name.split(".").pop().toLowerCase();
+  const ext = file.name ? file.name.split(".").pop().toLowerCase() : "";
   return ext === "pdf" || file.type === "application/pdf";
 }
 
@@ -1247,7 +1255,15 @@ function createCardElement(item) {
       </div>
     `;
   } else if (item.type === "pdf" || item.type === "file") {
-    const docLabel = item.type === "pdf" ? "PDF" : "DOC";
+    let docLabel = "DOC";
+    if (item.type === "pdf") {
+      docLabel = "PDF";
+    } else if (item.fileName) {
+      const ext = item.fileName.split('.').pop().toUpperCase();
+      if (["DOC", "DOCX", "TXT", "MD"].includes(ext)) {
+        docLabel = ext;
+      }
+    }
     customBodyHtml = `
       <div class="pdf-preview-box">
         <div class="pdf-mock-page"></div>
@@ -1672,11 +1688,19 @@ function registerEventListeners() {
   });
 
   fileInput.addEventListener("change", (e) => {
-    if (e.target.files.length > 0) {
+    if (e.target.files && e.target.files.length > 0) {
       addCaptureFiles(Array.from(e.target.files));
       fileInput.value = "";
     }
   });
+
+  const uploadTriggerBtn = document.getElementById("btn-trigger-upload");
+  if (uploadTriggerBtn) {
+    uploadTriggerBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (fileInput) fileInput.click();
+    });
+  }
 
   // Rich text toolbars
   document.querySelectorAll(".capture-toolbar .toolbar-btn").forEach(btn => {
@@ -1884,17 +1908,29 @@ function closeConfirmDialog() {
  * ------------------------------------------------------------- */
 let selectedModalTags = [];
 
-const ALLOWED_FILE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "pdf", "doc", "docx", "txt", "md"];
+const ALLOWED_FILE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "pdf", "doc", "docx", "txt", "md"];
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 
 function validateFile(file) {
+  if (!file) {
+    return { valid: false, error: "Invalid file." };
+  }
   if (file.size > MAX_FILE_SIZE_BYTES) {
     return { valid: false, error: "Files larger than 25 MB aren't supported yet." };
   }
 
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (!ALLOWED_FILE_EXTENSIONS.includes(ext)) {
-    return { valid: false, error: "This file type isn't supported yet. Supported: Images, PDF, Word, Text and Markdown." };
+  const ext = (file.name ? file.name.split('.').pop() : '').toLowerCase();
+  const mime = (file.type || '').toLowerCase();
+
+  const isAllowedExt = ALLOWED_FILE_EXTENSIONS.includes(ext);
+  const isAllowedMime = mime.startsWith('image/') || 
+                        mime === 'application/pdf' || 
+                        mime.includes('word') || 
+                        mime.includes('document') || 
+                        mime.startsWith('text/');
+
+  if (!isAllowedExt && !isAllowedMime) {
+    return { valid: false, error: "Unsupported file type. Please upload an image, PDF, Word document, text file, or Markdown file." };
   }
 
   return { valid: true };
@@ -2260,14 +2296,22 @@ function renderCapturePreviews() {
     let thumbHtml = `<span class="preview-icon">${getFilePreviewIcon(file)}</span>`;
     if (isImageFile(file)) {
       const objectUrl = URL.createObjectURL(file);
-      thumbHtml = `<img class="preview-thumb" src="${objectUrl}" alt="${file.name}">`;
+      thumbHtml = `<img class="preview-thumb" src="${objectUrl}" alt="${escapeHtml(file.name)}">`;
     }
+
+    const extUpper = (file.name ? file.name.split('.').pop() : '').toUpperCase();
+    let fileTypeLabel = "Document";
+    if (isPdfFile(file)) fileTypeLabel = "PDF document";
+    else if (isImageFile(file)) fileTypeLabel = "Image";
+    else if (extUpper) fileTypeLabel = `${extUpper} document`;
+
+    const sizeFormatted = file.size ? formatFileSize(file.size) : '';
 
     card.innerHTML = `
       ${thumbHtml}
       <div class="preview-details">
-        <span class="preview-title">${file.name}</span>
-        <span class="preview-subtitle">${isPdfFile(file) ? "PDF document" : isImageFile(file) ? "Image" : "Document"}</span>
+        <span class="preview-title" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+        <span class="preview-subtitle">${fileTypeLabel}${sizeFormatted ? ' • ' + sizeFormatted : ''}</span>
       </div>
       <button class="preview-remove" type="button" aria-label="Remove file">
         <i data-lucide="x"></i>
@@ -2523,6 +2567,7 @@ async function handleKeepItemSubmit(e) {
     title = domain || "Saved link";
   }
 
+  const primaryFile = captureFiles.length > 0 ? captureFiles[0] : null;
   const now = Date.now();
   const newItem = {
     id: `item-${now}`,
@@ -2534,6 +2579,9 @@ async function handleKeepItemSubmit(e) {
     author: author,
     imageUrl: imageUrl,
     storagePath: "",
+    fileName: primaryFile ? primaryFile.name : "",
+    fileSize: primaryFile && primaryFile.size ? formatFileSize(primaryFile.size) : "",
+    mimeType: primaryFile ? (primaryFile.type || "") : "",
     tags: [...selectedModalTags],
     createdAt: now,
     updatedAt: now,
@@ -2541,16 +2589,15 @@ async function handleKeepItemSubmit(e) {
   };
 
   try {
-    if (captureFiles.length > 0) {
-      const primaryFile = captureFiles[0];
+    if (primaryFile) {
       const uploadRes = await repository.uploadFile(primaryFile);
       if (uploadRes) {
         if (typeof uploadRes === "object") {
           newItem.storagePath = uploadRes.storagePath || "";
           newItem.imageUrl = uploadRes.fileUrl || "";
-          newItem.fileSize = uploadRes.fileSize || "";
-          newItem.mimeType = uploadRes.mimeType || primaryFile.type || "";
-          newItem.fileName = uploadRes.fileName || primaryFile.name || "";
+          if (uploadRes.fileSize) newItem.fileSize = uploadRes.fileSize;
+          if (uploadRes.mimeType) newItem.mimeType = uploadRes.mimeType;
+          if (uploadRes.fileName) newItem.fileName = uploadRes.fileName;
           if (newItem.type !== "image" && !newItem.url) {
             newItem.url = uploadRes.fileUrl || "";
           }
@@ -2558,6 +2605,9 @@ async function handleKeepItemSubmit(e) {
           newItem.imageUrl = uploadRes;
           if (!uploadRes.startsWith("data:")) {
             newItem.storagePath = uploadRes;
+          }
+          if (newItem.type !== "image" && !newItem.url) {
+            newItem.url = uploadRes;
           }
         }
       }
@@ -2696,6 +2746,186 @@ function getItemImageUrl(item) {
   return "";
 }
 
+function triggerDownload(fileUrl, fileName) {
+  if (!fileUrl || fileUrl === "#") return;
+
+  try {
+    if (fileUrl.startsWith("data:")) {
+      const a = document.createElement("a");
+      a.href = fileUrl;
+      a.download = fileName || "download";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      fetch(fileUrl)
+        .then(res => {
+          if (!res.ok) throw new Error("Network response was not ok");
+          return res.blob();
+        })
+        .then(blob => {
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = fileName || "download";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        })
+        .catch(err => {
+          console.warn("Direct blob download failed, falling back to anchor click:", err);
+          const a = document.createElement("a");
+          a.href = fileUrl;
+          a.download = fileName || "download";
+          a.target = "_blank";
+          a.rel = "noopener";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        });
+    }
+  } catch (err) {
+    console.warn("Download error:", err);
+    const a = document.createElement("a");
+    a.href = fileUrl;
+    a.download = fileName || "download";
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+}
+
+function renderDocumentCardFallback(container, item, displayTitle, docType) {
+  const noteText = item && item.content ? stripHtml(item.content).trim() : '';
+  container.innerHTML = `
+    <div style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 24px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px;">
+      <div style="width: 56px; height: 56px; border-radius: var(--radius-md); background: var(--color-border-subtle); color: var(--color-primary); display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 700;">
+        ${docType}
+      </div>
+      <div>
+        <h4 style="font-size: 1rem; font-weight: 600; margin: 0 0 4px 0; color: var(--color-text-primary);">${escapeHtml(displayTitle)}</h4>
+        <span style="font-size: 0.8125rem; color: var(--color-text-secondary);">${docType} document ${item && item.fileSize ? '• ' + escapeHtml(item.fileSize) : ''}</span>
+      </div>
+      ${noteText ? `
+        <div style="margin-top: 12px; width: 100%; text-align: left; background: var(--color-card); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); font-size: 0.875rem; color: var(--color-text-primary);">
+          <strong style="display: block; margin-bottom: 6px; font-size: 0.75rem; color: var(--color-text-secondary); text-transform: uppercase;">Notes / Content Summary</strong>
+          ${escapeHtml(noteText)}
+        </div>
+      ` : ''}
+      <p style="font-size: 0.8125rem; color: var(--color-text-tertiary); margin: 8px 0 0 0;">
+        Ready for previewing metadata and downloading to your system.
+      </p>
+    </div>
+  `;
+}
+
+function openDocumentPreviewModal(item, fileLink, displayTitle) {
+  let modal = document.getElementById("document-preview-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "document-preview-modal";
+    modal.className = "modal-backdrop";
+    modal.style.zIndex = "10000";
+    modal.innerHTML = `
+      <div class="modal-card doc-preview-card" style="max-width: 780px; width: 92vw; max-height: 90vh; display: flex; flex-direction: column; padding: 24px;">
+        <div class="modal-header" style="margin-bottom: 16px; border-bottom: 1px solid var(--color-border); padding-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; min-width: 0;">
+            <span id="doc-modal-type-badge" style="background: var(--color-surface); border: 1px solid var(--color-border); font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); text-transform: uppercase;"></span>
+            <h3 id="doc-modal-title" style="font-size: 1.05rem; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Document Preview</h3>
+          </div>
+          <button class="modal-close-btn" id="btn-close-doc-modal" type="button">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div id="doc-modal-body" style="flex: 1; overflow-y: auto; padding: 12px 0; display: flex; flex-direction: column; gap: 16px;">
+        </div>
+        <div class="modal-footer-actions" style="margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 16px; display: flex; align-items: center; justify-content: space-between;">
+          <span id="doc-modal-meta" style="font-size: 0.8125rem; color: var(--color-text-secondary);"></span>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-tertiary btn-sm" id="btn-cancel-doc-modal" type="button">Close</button>
+            <button class="btn btn-primary btn-sm" id="btn-download-doc-modal" type="button">
+              <i data-lucide="download"></i><span>Download file</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector("#btn-close-doc-modal");
+    const cancelBtn = modal.querySelector("#btn-cancel-doc-modal");
+    const closeHandler = () => modal.classList.remove("active");
+    if (closeBtn) closeBtn.addEventListener("click", closeHandler);
+    if (cancelBtn) cancelBtn.addEventListener("click", closeHandler);
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.classList.remove("active");
+    });
+  }
+
+  const typeBadge = modal.querySelector("#doc-modal-type-badge");
+  const titleEl = modal.querySelector("#doc-modal-title");
+  const metaEl = modal.querySelector("#doc-modal-meta");
+  const bodyEl = modal.querySelector("#doc-modal-body");
+  const downloadBtn = modal.querySelector("#btn-download-doc-modal");
+
+  const ext = (displayTitle ? displayTitle.split('.').pop() : '').toLowerCase();
+  let docType = (item && item.type === "pdf") ? "PDF" : (ext ? ext.toUpperCase() : "DOC");
+
+  if (typeBadge) typeBadge.textContent = docType;
+  if (titleEl) titleEl.textContent = displayTitle || "Document Preview";
+  if (metaEl) metaEl.textContent = `${docType} Document ${item && item.fileSize ? '• ' + item.fileSize : ''}`;
+
+  if (downloadBtn) {
+    downloadBtn.onclick = (e) => {
+      e.preventDefault();
+      triggerDownload(fileLink, displayTitle);
+    };
+  }
+
+  if (bodyEl) {
+    bodyEl.innerHTML = "";
+
+    const isPdf = ext === "pdf" || (item && item.type === "pdf") || (item && item.mimeType === "application/pdf");
+    const isDocx = ["docx", "doc"].includes(ext) || (item && item.mimeType && item.mimeType.includes("word"));
+    const isText = ["txt", "md"].includes(ext) || (item && item.mimeType && item.mimeType.startsWith("text/"));
+
+    if (isPdf && fileLink && fileLink !== "#") {
+      bodyEl.innerHTML = `
+        <div style="width: 100%; height: 60vh; background: var(--color-surface); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border);">
+          <iframe src="${escapeHtml(fileLink)}" style="width: 100%; height: 100%; border: none;"></iframe>
+        </div>
+      `;
+    } else if (isDocx && fileLink && fileLink.startsWith("http")) {
+      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileLink)}`;
+      bodyEl.innerHTML = `
+        <div style="width: 100%; height: 60vh; background: var(--color-surface); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border);">
+          <iframe src="${escapeHtml(officeViewerUrl)}" style="width: 100%; height: 100%; border: none;"></iframe>
+        </div>
+      `;
+    } else if (isText && fileLink && fileLink.startsWith("data:text")) {
+      try {
+        const textContent = decodeURIComponent(fileLink.split(',')[1] || '');
+        bodyEl.innerHTML = `
+          <div style="background: var(--color-surface); padding: 18px; border-radius: var(--radius-md); border: 1px solid var(--color-border); max-height: 55vh; overflow-y: auto;">
+            <pre style="margin: 0; white-space: pre-wrap; font-family: inherit; font-size: 0.9rem; color: var(--color-text-primary); line-height: 1.5;">${escapeHtml(textContent)}</pre>
+          </div>
+        `;
+      } catch (e) {
+        renderDocumentCardFallback(bodyEl, item, displayTitle, docType);
+      }
+    } else {
+      renderDocumentCardFallback(bodyEl, item, displayTitle, docType);
+    }
+  }
+
+  modal.classList.add("active");
+  if (window.lucide) window.lucide.createIcons();
+}
+
 function openImageLightbox(imgSrc, imgTitle) {
   let lightbox = document.getElementById("image-lightbox-modal");
   if (!lightbox) {
@@ -2713,9 +2943,9 @@ function openImageLightbox(imgSrc, imgTitle) {
         </div>
         <div style="margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border-top: 1px solid var(--color-border); padding-top: 14px;">
           <span id="lightbox-title" style="font-size: 0.95rem; font-weight: 600; color: var(--color-text); word-break: break-all; flex: 1;"></span>
-          <a id="lightbox-download-link" class="btn btn-primary btn-sm" href="" download="" target="_blank" rel="noopener">
+          <button id="lightbox-download-link" class="btn btn-primary btn-sm" type="button">
             <i data-lucide="download"></i><span>Download</span>
-          </a>
+          </button>
         </div>
       </div>
     `;
@@ -2742,8 +2972,10 @@ function openImageLightbox(imgSrc, imgTitle) {
   if (imgEl) imgEl.src = imgSrc;
   if (titleEl) titleEl.textContent = imgTitle || "Image Preview";
   if (downloadLink) {
-    downloadLink.href = imgSrc;
-    downloadLink.download = imgTitle || "image";
+    downloadLink.onclick = (e) => {
+      e.preventDefault();
+      triggerDownload(imgSrc, imgTitle || "image");
+    };
   }
 
   lightbox.classList.add("active");
@@ -2812,17 +3044,18 @@ function renderDetailPreview(item) {
               <button type="button" class="btn btn-secondary btn-sm" id="btn-image-preview-action">
                 <i data-lucide="eye"></i><span>Preview</span>
               </button>
-              <a class="btn btn-secondary btn-sm" href="${escapeHtml(rawImgUrl || imgUrl)}" download="${escapeHtml(displayTitle || 'image')}" target="_blank" rel="noopener">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-image-download-action">
                 <i data-lucide="download"></i><span>Download</span>
-              </a>
+              </button>
             </div>
           </div>
         </div>
       `;
 
-      // Attach handlers for preview lightbox
+      // Attach handlers for preview lightbox and download
       const imgMediaEl = document.getElementById("detail-preview-img-media");
       const previewBtnEl = document.getElementById("btn-image-preview-action");
+      const downloadBtnEl = document.getElementById("btn-image-download-action");
 
       const handleOpenPreview = (e) => {
         e.preventDefault();
@@ -2836,28 +3069,64 @@ function renderDetailPreview(item) {
       if (previewBtnEl) {
         previewBtnEl.addEventListener("click", handleOpenPreview);
       }
+      if (downloadBtnEl) {
+        downloadBtnEl.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          triggerDownload(rawImgUrl || imgUrl, displayTitle);
+        });
+      }
 
     } else if (item.type === "pdf" || item.type === "file") {
-      const docLabel = item.type === "pdf" ? "PDF" : "DOC";
+      let docLabel = "DOC";
+      if (item.type === "pdf") {
+        docLabel = "PDF";
+      } else if (item.fileName) {
+        const ext = item.fileName.split('.').pop().toUpperCase();
+        if (["DOC", "DOCX", "TXT", "MD"].includes(ext)) {
+          docLabel = ext;
+        }
+      }
       const fileLink = item.url || item.imageUrl || item.storagePath || "#";
-      const displayTitle = title || "Document";
+      const displayTitle = item.fileName || title || "Document";
       container.innerHTML = `
         <div class="preview-pdf-box">
           <div class="pdf-icon-wrap">${docLabel}</div>
           <div class="pdf-details">
             <span class="pdf-name" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
-            <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : 'Document'}</span>
+            <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : (docLabel + ' Document')}</span>
           </div>
           <div class="pdf-actions">
-            <a class="btn btn-secondary btn-sm" href="${escapeHtml(fileLink)}" target="_blank" rel="noopener">
+            ${fileLink && fileLink !== "#" ? `
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-doc-preview-action">
               <i data-lucide="eye"></i><span>Preview</span>
-            </a>
-            <a class="btn btn-secondary btn-sm" href="${escapeHtml(fileLink)}" download="${escapeHtml(displayTitle || 'document')}">
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-doc-download-action">
               <i data-lucide="download"></i><span>Download</span>
-            </a>
+            </button>
+            ` : ''}
           </div>
         </div>
       `;
+
+      const docPreviewBtn = document.getElementById("btn-doc-preview-action");
+      const docDownloadBtn = document.getElementById("btn-doc-download-action");
+
+      if (docPreviewBtn) {
+        docPreviewBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openDocumentPreviewModal(item, fileLink, displayTitle);
+        });
+      }
+
+      if (docDownloadBtn) {
+        docDownloadBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          triggerDownload(fileLink, displayTitle);
+        });
+      }
     }
   }
 }

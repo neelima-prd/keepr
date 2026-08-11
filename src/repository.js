@@ -630,14 +630,48 @@ export class SupabaseArtifactRepository {
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
+    const mimeType = (file.type && file.type.trim()) ? file.type.trim() : (() => {
+      const ext = (file && file.name) ? file.name.split('.').pop().toLowerCase() : '';
+      switch (ext) {
+        case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        case 'doc': return 'application/msword';
+        case 'pdf': return 'application/pdf';
+        case 'txt': return 'text/plain';
+        case 'md': return 'text/markdown';
+        case 'png': return 'image/png';
+        case 'jpg':
+        case 'jpeg': return 'image/jpeg';
+        case 'webp': return 'image/webp';
+        case 'gif': return 'image/gif';
+        default: return 'application/octet-stream';
+      }
+    })();
+
     try {
       const { error: uploadError } = await supabase.storage
         .from(this.bucketName)
-        .upload(filePath, file, { upsert: true, contentType: file.type });
+        .upload(filePath, file, { upsert: true, contentType: mimeType });
 
       if (uploadError) {
-        console.error("Error uploading file to Supabase storage:", uploadError);
-        throw uploadError;
+        console.warn("Error uploading file to Supabase storage, falling back to data URL:", uploadError);
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({
+            storagePath: '',
+            fileUrl: reader.result,
+            fileName: file.name,
+            fileSize: formatFileSize(file.size),
+            mimeType: mimeType
+          });
+          reader.onerror = () => resolve({
+            storagePath: '',
+            fileUrl: '',
+            fileName: file.name,
+            fileSize: formatFileSize(file.size),
+            mimeType: mimeType
+          });
+          reader.readAsDataURL(file);
+        });
       }
 
       let fileUrl = '';
@@ -664,11 +698,28 @@ export class SupabaseArtifactRepository {
         fileUrl: fileUrl,
         fileName: file.name,
         fileSize: formatFileSize(file.size),
-        mimeType: file.type
+        mimeType: mimeType
       };
     } catch (err) {
-      console.error("Failed to upload file to storage:", err);
-      throw err;
+      console.warn("Failed to upload file to storage, falling back to data URL:", err);
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({
+          storagePath: '',
+          fileUrl: reader.result,
+          fileName: file.name,
+          fileSize: formatFileSize(file.size),
+          mimeType: mimeType
+        });
+        reader.onerror = () => resolve({
+          storagePath: '',
+          fileUrl: '',
+          fileName: file.name,
+          fileSize: formatFileSize(file.size),
+          mimeType: mimeType
+        });
+        reader.readAsDataURL(file);
+      });
     }
   }
 }

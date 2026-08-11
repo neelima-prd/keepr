@@ -422,8 +422,15 @@
             aria-multiline="true"
             data-placeholder="What's worth remembering?"
           ></div>
-          <p class="capture-helper-text">Paste links, type notes or drag screenshots, PDFs and documents here.</p>
-          <input type="file" id="keep-file" accept="image/*,application/pdf,.doc,.docx,.txt" multiple style="display: none;">
+          <div class="capture-upload-bar">
+            <p class="capture-helper-text">Paste links, type notes or drag screenshots, PDFs and documents here</p>
+            <span class="capture-upload-separator">or</span>
+            <button type="button" class="btn btn-secondary btn-sm btn-upload-trigger" id="btn-trigger-upload">
+              <i data-lucide="upload-cloud"></i>
+              <span>Upload file</span>
+            </button>
+          </div>
+          <input type="file" id="keep-file" accept="image/*,application/pdf,.doc,.docx,.txt,.md,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple style="display: none;">
           <div class="capture-previews" id="capture-previews"></div>
         </div>
 
