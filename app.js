@@ -31,7 +31,62 @@ document.addEventListener("DOMContentLoaded", async () => {
   registerEventListeners();
   renderAll();
   lucide.createIcons();
+  initServiceWorker();
+  checkWebShareTarget();
 });
+
+/* Service Worker & Web Share Registration for PWA */
+function initServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/public/sw.js')
+        .then((registration) => {
+          console.log('[Keepr PWA] Service worker registered:', registration.scope);
+          registration.onupdatefound = () => {
+            const installingWorker = registration.installing;
+            if (installingWorker) {
+              installingWorker.onstatechange = () => {
+                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  showToast('App update available.');
+                }
+              };
+            }
+          };
+        })
+        .catch((error) => {
+          console.warn('[Keepr PWA] Service worker registration error:', error);
+        });
+    });
+  }
+}
+
+function checkWebShareTarget() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const sharedTitle = params.get('title');
+    const sharedText = params.get('text');
+    const sharedUrl = params.get('url');
+
+    if (sharedTitle || sharedText || sharedUrl) {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+
+      setTimeout(() => {
+        openKeepModal();
+        const editor = document.getElementById("keep-capture-editor");
+        if (editor) {
+          let content = '';
+          if (sharedTitle) content += `<h3>${escapeHtml(sharedTitle)}</h3>`;
+          if (sharedText) content += `<p>${escapeHtml(sharedText)}</p>`;
+          if (sharedUrl) content += `<p><a href="${escapeHtml(sharedUrl)}" target="_blank" rel="noopener">${escapeHtml(sharedUrl)}</a></p>`;
+          editor.innerHTML = content;
+        }
+      }, 300);
+    }
+  } catch (err) {
+    console.warn('Web Share check warning:', err);
+  }
+}
 
 /* -------------------------------------------------------------
  * Database Management (Repository Layer Abstraction)
