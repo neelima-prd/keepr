@@ -4,6 +4,7 @@
 
 import { repository, INITIAL_DATA } from './src/repository.js';
 import { supabase, isSupabaseConfigured } from './src/supabase.js';
+import { renderAsync as renderDocx } from 'docx-preview';
 
 // App State
 let database = [];
@@ -393,6 +394,9 @@ function showAuthView() {
       panel.classList.remove("active");
     }
   });
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
 }
 
 function getFormattedFirstName(user) {
@@ -2822,7 +2826,7 @@ function renderDocumentCardFallback(container, item, displayTitle, docType) {
   `;
 }
 
-function openDocumentPreviewModal(item, fileLink, displayTitle) {
+async function openDocumentPreviewModal(item, fileLink, displayTitle) {
   let modal = document.getElementById("document-preview-modal");
   if (!modal) {
     modal = document.createElement("div");
@@ -2834,7 +2838,7 @@ function openDocumentPreviewModal(item, fileLink, displayTitle) {
         <div class="modal-header" style="margin-bottom: 16px; border-bottom: 1px solid var(--color-border); padding-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
           <div style="display: flex; align-items: center; gap: 10px; overflow: hidden; min-width: 0;">
             <span id="doc-modal-type-badge" style="background: var(--color-surface); border: 1px solid var(--color-border); font-size: 0.75rem; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); text-transform: uppercase;"></span>
-            <h3 id="doc-modal-title" style="font-size: 1.05rem; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Document Preview</h3>
+            <h3 id="doc-modal-title" style="font-size: 1.05rem; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Preview</h3>
           </div>
           <button class="modal-close-btn" id="btn-close-doc-modal" type="button">
             <i data-lucide="x"></i>
@@ -2873,11 +2877,14 @@ function openDocumentPreviewModal(item, fileLink, displayTitle) {
   const downloadBtn = modal.querySelector("#btn-download-doc-modal");
 
   const ext = (displayTitle ? displayTitle.split('.').pop() : '').toLowerCase();
-  let docType = (item && item.type === "pdf") ? "PDF" : (ext ? ext.toUpperCase() : "DOC");
+  let docType = (item && item.type === "pdf") ? "PDF" : ((item && item.type === "image") ? "IMAGE" : (ext ? ext.toUpperCase() : "FILE"));
 
   if (typeBadge) typeBadge.textContent = docType;
-  if (titleEl) titleEl.textContent = displayTitle || "Document Preview";
-  if (metaEl) metaEl.textContent = `${docType} Document ${item && item.fileSize ? '• ' + item.fileSize : ''}`;
+  if (titleEl) titleEl.textContent = displayTitle || "File Preview";
+
+  const isImage = (item && item.type === "image") || ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext) || (item && item.mimeType && item.mimeType.startsWith("image/"));
+  const typeText = isImage ? "Image" : "Document";
+  if (metaEl) metaEl.textContent = `${docType} ${typeText} ${item && item.fileSize ? '• ' + item.fileSize : ''}`;
 
   if (downloadBtn) {
     downloadBtn.onclick = (e) => {
@@ -2891,29 +2898,56 @@ function openDocumentPreviewModal(item, fileLink, displayTitle) {
 
     const isPdf = ext === "pdf" || (item && item.type === "pdf") || (item && item.mimeType === "application/pdf");
     const isDocx = ["docx", "doc"].includes(ext) || (item && item.mimeType && item.mimeType.includes("word"));
-    const isText = ["txt", "md"].includes(ext) || (item && item.mimeType && item.mimeType.startsWith("text/"));
+    const isText = ["txt", "md", "csv", "json", "js", "ts", "html", "css", "py", "xml"].includes(ext) || (item && item.mimeType && (item.mimeType.startsWith("text/") || item.mimeType.includes("json")));
 
-    if (isPdf && fileLink && fileLink !== "#") {
+    if (isImage && fileLink && fileLink !== "#") {
+      bodyEl.innerHTML = `
+        <div style="width: 100%; min-height: 250px; max-height: 60vh; background: var(--color-surface); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border); display: flex; align-items: center; justify-content: center; padding: 16px;">
+          <img src="${escapeHtml(fileLink)}" alt="${escapeHtml(displayTitle)}" style="max-width: 100%; max-height: 55vh; object-fit: contain; border-radius: var(--radius-sm);" />
+        </div>
+      `;
+    } else if (isPdf && fileLink && fileLink !== "#") {
       bodyEl.innerHTML = `
         <div style="width: 100%; height: 60vh; background: var(--color-surface); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border);">
           <iframe src="${escapeHtml(fileLink)}" style="width: 100%; height: 100%; border: none;"></iframe>
         </div>
       `;
-    } else if (isDocx && fileLink && fileLink.startsWith("http")) {
-      const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileLink)}`;
+    } else if (isDocx && fileLink && fileLink !== "#") {
       bodyEl.innerHTML = `
-        <div style="width: 100%; height: 60vh; background: var(--color-surface); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border);">
-          <iframe src="${escapeHtml(officeViewerUrl)}" style="width: 100%; height: 100%; border: none;"></iframe>
+        <div id="docx-preview-container" style="width: 100%; min-height: 50vh; max-height: 65vh; overflow-y: auto; background: #ffffff; color: #111827; border-radius: var(--radius-md); padding: 20px; border: 1px solid var(--color-border); box-sizing: border-box;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 220px; color: #6b7280; font-size: 0.9rem; font-weight: 500;">
+            <span>Loading document preview...</span>
+          </div>
         </div>
       `;
-    } else if (isText && fileLink && fileLink.startsWith("data:text")) {
+      const container = bodyEl.querySelector("#docx-preview-container");
       try {
-        const textContent = decodeURIComponent(fileLink.split(',')[1] || '');
-        bodyEl.innerHTML = `
-          <div style="background: var(--color-surface); padding: 18px; border-radius: var(--radius-md); border: 1px solid var(--color-border); max-height: 55vh; overflow-y: auto;">
-            <pre style="margin: 0; white-space: pre-wrap; font-family: inherit; font-size: 0.9rem; color: var(--color-text-primary); line-height: 1.5;">${escapeHtml(textContent)}</pre>
-          </div>
-        `;
+        const res = await fetch(fileLink);
+        const blob = await res.blob();
+        container.innerHTML = "";
+        await renderDocx(blob, container, null, {
+          className: "docx-render",
+          inWrapper: false,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          experimental: true,
+          useBase64URL: true
+        });
+      } catch (err) {
+        console.warn("docx-preview failed, displaying fallback:", err);
+        renderDocumentCardFallback(bodyEl, item, displayTitle, docType);
+      }
+    } else if (isText && fileLink && fileLink !== "#") {
+      bodyEl.innerHTML = `
+        <div style="background: var(--color-surface); padding: 18px; border-radius: var(--radius-md); border: 1px solid var(--color-border); max-height: 55vh; overflow-y: auto;">
+          <pre id="text-preview-content" style="margin: 0; white-space: pre-wrap; font-family: monospace; font-size: 0.875rem; color: var(--color-text-primary); line-height: 1.5;">Loading text...</pre>
+        </div>
+      `;
+      try {
+        const textRes = await fetch(fileLink);
+        const text = await textRes.text();
+        const preEl = bodyEl.querySelector("#text-preview-content");
+        if (preEl) preEl.textContent = text;
       } catch (e) {
         renderDocumentCardFallback(bodyEl, item, displayTitle, docType);
       }
@@ -2926,60 +2960,11 @@ function openDocumentPreviewModal(item, fileLink, displayTitle) {
   if (window.lucide) window.lucide.createIcons();
 }
 
-function openImageLightbox(imgSrc, imgTitle) {
-  let lightbox = document.getElementById("image-lightbox-modal");
-  if (!lightbox) {
-    lightbox = document.createElement("div");
-    lightbox.id = "image-lightbox-modal";
-    lightbox.className = "modal-backdrop";
-    lightbox.style.zIndex = "10000";
-    lightbox.innerHTML = `
-      <div class="lightbox-card" style="position: relative; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: var(--color-card); border-radius: var(--radius-lg); border: 1px solid var(--color-border); box-shadow: var(--shadow-modal);">
-        <button class="modal-close-btn" id="btn-close-lightbox" type="button" style="position: absolute; top: 12px; right: 12px; z-index: 10;">
-          <i data-lucide="x"></i>
-        </button>
-        <div style="max-height: 72vh; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 100%;">
-          <img id="lightbox-img" src="" alt="" style="max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: var(--radius-md);">
-        </div>
-        <div style="margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border-top: 1px solid var(--color-border); padding-top: 14px;">
-          <span id="lightbox-title" style="font-size: 0.95rem; font-weight: 600; color: var(--color-text); word-break: break-all; flex: 1;"></span>
-          <button id="lightbox-download-link" class="btn btn-primary btn-sm" type="button">
-            <i data-lucide="download"></i><span>Download</span>
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(lightbox);
-
-    const closeBtn = lightbox.querySelector("#btn-close-lightbox");
-    if (closeBtn) {
-      closeBtn.addEventListener("click", () => {
-        lightbox.classList.remove("active");
-      });
-    }
-
-    lightbox.addEventListener("click", (e) => {
-      if (e.target === lightbox) {
-        lightbox.classList.remove("active");
-      }
-    });
-  }
-
-  const imgEl = lightbox.querySelector("#lightbox-img");
-  const titleEl = lightbox.querySelector("#lightbox-title");
-  const downloadLink = lightbox.querySelector("#lightbox-download-link");
-
-  if (imgEl) imgEl.src = imgSrc;
-  if (titleEl) titleEl.textContent = imgTitle || "Image Preview";
-  if (downloadLink) {
-    downloadLink.onclick = (e) => {
-      e.preventDefault();
-      triggerDownload(imgSrc, imgTitle || "image");
-    };
-  }
-
-  lightbox.classList.add("active");
-  if (window.lucide) window.lucide.createIcons();
+function openImageLightbox(imgSrc, imgTitle, item) {
+  const fileLink = imgSrc || (item ? (item.imageUrl || item.url || item.storagePath) : "#");
+  const displayTitle = imgTitle || (item ? getArtifactTitle(item) : "Image Preview");
+  const imgItem = item || { type: "image", imageUrl: fileLink, fileName: displayTitle };
+  openDocumentPreviewModal(imgItem, fileLink, displayTitle);
 }
 
 function renderDetailPreview(item) {
@@ -3031,16 +3016,27 @@ function renderDetailPreview(item) {
     } else if (item.type === "image") {
       const rawImgUrl = getItemImageUrl(item);
       const imgUrl = rawImgUrl || "data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22 fill=%22%23eaeaea%22></svg>";
-      const displayTitle = title || "Image";
+      const displayTitle = item.fileName || title || "Image";
+      let imgLabel = "IMAGE";
+      if (item.fileName) {
+        const ext = item.fileName.split('.').pop().toUpperCase();
+        if (["PNG", "JPG", "JPEG", "GIF", "WEBP", "SVG"].includes(ext)) {
+          imgLabel = ext;
+        }
+      }
 
       container.innerHTML = `
         <div class="preview-image-box">
           <div class="preview-image-media-wrap">
-            <img class="preview-image-media" src="${escapeHtml(imgUrl)}" alt="${escapeHtml(displayTitle)}" id="detail-preview-img-media">
+            <img class="preview-image-media" src="${escapeHtml(imgUrl)}" alt="${escapeHtml(displayTitle)}" id="detail-preview-img-media" title="Click to view full preview">
           </div>
-          <div class="preview-image-info">
-            <span class="preview-image-title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
-            <div class="preview-image-actions">
+          <div class="preview-pdf-box" style="border-top: 1px solid var(--color-border); background: var(--color-card);">
+            <div class="pdf-icon-wrap">${imgLabel}</div>
+            <div class="pdf-details">
+              <span class="pdf-name" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+              <span class="pdf-meta">${item.fileSize ? escapeHtml(item.fileSize) : (imgLabel + ' Image')}</span>
+            </div>
+            <div class="pdf-actions">
               <button type="button" class="btn btn-secondary btn-sm" id="btn-image-preview-action">
                 <i data-lucide="eye"></i><span>Preview</span>
               </button>
@@ -3052,7 +3048,7 @@ function renderDetailPreview(item) {
         </div>
       `;
 
-      // Attach handlers for preview lightbox and download
+      // Attach handlers for preview modal and download
       const imgMediaEl = document.getElementById("detail-preview-img-media");
       const previewBtnEl = document.getElementById("btn-image-preview-action");
       const downloadBtnEl = document.getElementById("btn-image-download-action");
@@ -3060,7 +3056,7 @@ function renderDetailPreview(item) {
       const handleOpenPreview = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        openImageLightbox(rawImgUrl || imgUrl, displayTitle);
+        openImageLightbox(rawImgUrl || imgUrl, displayTitle, item);
       };
 
       if (imgMediaEl) {
@@ -3083,7 +3079,7 @@ function renderDetailPreview(item) {
         docLabel = "PDF";
       } else if (item.fileName) {
         const ext = item.fileName.split('.').pop().toUpperCase();
-        if (["DOC", "DOCX", "TXT", "MD"].includes(ext)) {
+        if (["DOC", "DOCX", "TXT", "MD", "PNG", "JPG", "JPEG", "GIF", "WEBP", "SVG", "PDF", "CSV", "JSON"].includes(ext)) {
           docLabel = ext;
         }
       }

@@ -317,16 +317,70 @@
 
     <!-- AUTHENTICATION VIEW -->
     <section id="view-auth" class="view-panel">
-      <div class="auth-container">
-        <div class="auth-card">
-          <div class="auth-header">
-            <div class="auth-brand">
-              <i data-lucide="bookmark" class="auth-logo-icon"></i>
-              <span class="auth-brand-name">keepr.</span>
-            </div>
-            <p class="auth-tagline">Capture anything. Find everything.</p>
+      <div class="auth-page-wrapper">
+        <!-- Product Introduction -->
+        <div class="auth-intro-card">
+          <div class="auth-brand">
+            <i data-lucide="bookmark" class="auth-logo-icon"></i>
+            <span class="auth-brand-name">keepr.</span>
           </div>
 
+          <h1 class="auth-headline">Capture anything.<br>Find everything.</h1>
+
+          <div class="auth-description">
+            <p>Keepr is your personal memory workspace for the things worth remembering - notes, links, screenshots, images and documents.</p>
+            <p class="auth-sub-description">Save it once. Find it when you need it.</p>
+          </div>
+
+          <!-- What you can keep -->
+          <div class="auth-value-section">
+            <span class="auth-value-title">WHAT YOU CAN KEEP</span>
+            <div class="auth-value-grid">
+              <div class="auth-value-item">
+                <div class="auth-value-icon">
+                  <i data-lucide="file-text"></i>
+                </div>
+                <div class="auth-value-text">
+                  <strong>NOTES</strong>
+                  <span>Ideas, reminders &amp; thoughts</span>
+                </div>
+              </div>
+
+              <div class="auth-value-item">
+                <div class="auth-value-icon">
+                  <i data-lucide="link"></i>
+                </div>
+                <div class="auth-value-text">
+                  <strong>LINKS</strong>
+                  <span>Articles, references &amp; resources</span>
+                </div>
+              </div>
+
+              <div class="auth-value-item">
+                <div class="auth-value-icon">
+                  <i data-lucide="image"></i>
+                </div>
+                <div class="auth-value-text">
+                  <strong>IMAGES</strong>
+                  <span>Screenshots &amp; visual inspiration</span>
+                </div>
+              </div>
+
+              <div class="auth-value-item">
+                <div class="auth-value-icon">
+                  <i data-lucide="file-digit"></i>
+                </div>
+                <div class="auth-value-text">
+                  <strong>DOCUMENTS</strong>
+                  <span>PDFs &amp; files worth keeping</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Authentication Form -->
+        <div class="auth-card">
           <div class="auth-body">
             <!-- Alert / Status message container -->
             <div id="auth-alert" class="auth-alert" style="display: none;"></div>
@@ -378,8 +432,6 @@
               </form>
             </div>
           </div>
-
-          <div class="auth-footer">
         </div>
       </div>
     </section>
