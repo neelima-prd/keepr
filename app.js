@@ -13,6 +13,8 @@ let activeTypeFilter = "all";
 let activeTagFilters = [];
 let searchQuery = "";
 let captureFiles = [];
+let isPickingFile = false;
+let filePickerTimeout = null;
 let currentDetailItem = null;
 let detailOriginTab = "home";
 
@@ -143,6 +145,9 @@ function closeAllOverlayDrawers() {
 }
 
 function handlePopState(e) {
+  if (isPickingFile) {
+    return;
+  }
   const detailDrawer = document.getElementById("detail-drawer");
   const keepModal = document.getElementById("keep-modal");
   const confirmModal = document.getElementById("confirm-dialog-modal");
@@ -152,16 +157,9 @@ function handlePopState(e) {
     return;
   }
   if (keepModal && keepModal.classList.contains("active")) {
-    keepModal.classList.remove("active");
-    selectedModalTags = [];
-    captureFiles = [];
-    const editor = document.getElementById("keep-capture-editor");
-    if (editor) editor.innerHTML = "";
-    const form = document.getElementById("keep-form");
-    if (form) form.reset();
-    const previews = document.getElementById("capture-previews");
-    if (previews) previews.innerHTML = "";
-    clearModalStatusError();
+    if (!isPickingFile) {
+      closeKeepModal();
+    }
     return;
   }
   if (detailDrawer && detailDrawer.classList.contains("active")) {
@@ -972,7 +970,21 @@ function renderHomeGreeting() {
   greetingEl.textContent = `Good ${timeOfDay}, ${name} ${emoji}`;
 }
 
-// Helper to format relative time
+// Helper to decode HTML entities safely (including &nbsp;, &#160;, &amp;, &quot;, &lt;, &gt;, etc.)
+function decodeHtmlEntities(str) {
+  if (!str || typeof str !== "string") return "";
+  if (!str.includes("&")) return str;
+  const txt = document.createElement("textarea");
+  txt.innerHTML = str;
+  let decoded = txt.value;
+  if (decoded.includes("&nbsp;") || decoded.includes("&#160;") || decoded.includes("&amp;")) {
+    txt.innerHTML = decoded;
+    decoded = txt.value;
+  }
+  return decoded;
+}
+
+// Helper to escape HTML characters for safe attribute/tag injection
 function escapeHtml(str) {
   if (!str) return "";
   return String(str)
@@ -991,14 +1003,16 @@ function autoLinkUrls(text) {
 
 function stripHtml(html) {
   if (!html) return "";
+  let raw = String(html)
+    .replace(/&amp;nbsp;/gi, " ")
+    .replace(/&nbsp;/gi, " ");
   const tmp = document.createElement("div");
-  tmp.innerHTML = html;
+  tmp.innerHTML = raw;
   let text = (tmp.textContent || tmp.innerText || "").trim();
-  if (text.includes("<") && text.includes(">")) {
-    tmp.innerHTML = text;
-    text = (tmp.textContent || tmp.innerText || "").trim();
+  if (text.includes("&")) {
+    text = decodeHtmlEntities(text);
   }
-  return text;
+  return text.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ").trim();
 }
 
 function sanitizeAndFormatHtml(html) {
@@ -1006,6 +1020,9 @@ function sanitizeAndFormatHtml(html) {
 
   let input = String(html).trim();
   if (!input) return "";
+
+  // Fix double-encoded entities from legacy data (e.g. &amp;nbsp; -> &nbsp;)
+  input = input.replace(/&amp;nbsp;/gi, "&nbsp;");
 
   // Unescape entity-encoded HTML strings if present (e.g. &lt;b&gt;)
   if ((input.includes("&lt;") || input.includes("&gt;")) && !input.includes("<")) {
@@ -1017,7 +1034,8 @@ function sanitizeAndFormatHtml(html) {
   // Check if pure plain text without tags
   const hasTags = /<[a-z][\s\S]*>/i.test(input);
   if (!hasTags) {
-    const escaped = escapeHtml(input);
+    let decoded = decodeHtmlEntities(input);
+    const escaped = escapeHtml(decoded);
     const lineFormatted = escaped.replace(/\r?\n/g, "<br>");
     return autoLinkUrls(lineFormatted);
   }
@@ -1071,7 +1089,8 @@ function sanitizeAndFormatHtml(html) {
     Array.from(doc.body.childNodes).forEach(sanitizeNode);
     return doc.body.innerHTML;
   } catch (err) {
-    return escapeHtml(input);
+    let decoded = decodeHtmlEntities(input);
+    return escapeHtml(decoded);
   }
 }
 
@@ -1174,11 +1193,25 @@ function getCardAccentClass(item) {
 
 function cleanTitleText(text) {
   if (!text) return "";
-  return String(text)
+  let clean = decodeHtmlEntities(String(text));
+  return clean
     .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
     .replace(/^[\s#*_\-~>\u2022\u25E6\u25AA\u25AB\u2013\u2014]+/, "")
     .replace(/^\[[ xX]?\]\s*/, "")
     .replace(/[*_~`#]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanPreviewText(text) {
+  if (!text) return "";
+  let clean = decodeHtmlEntities(String(text));
+  return clean
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1194,7 +1227,11 @@ function formatTruncatedTitle(titleText, maxChars = 70) {
 
 function extractTextLinesFromHtml(html) {
   if (!html) return [];
-  let formatted = String(html)
+  let raw = String(html)
+    .replace(/&amp;nbsp;/gi, " ")
+    .replace(/&nbsp;/gi, " ");
+
+  let formatted = raw
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h1|h2|h3|h4|h5|h6|blockquote|tr)>/gi, "\n")
     .replace(/<(p|div|li|h1|h2|h3|h4|h5|h6|blockquote|tr)[^>]*>/gi, "\n");
@@ -1203,14 +1240,13 @@ function extractTextLinesFromHtml(html) {
   tmp.innerHTML = formatted;
   let rawText = (tmp.textContent || tmp.innerText || "");
 
-  if (rawText.includes("<") && rawText.includes(">")) {
-    tmp.innerHTML = rawText;
-    rawText = (tmp.textContent || tmp.innerText || "");
+  if (rawText.includes("&")) {
+    rawText = decodeHtmlEntities(rawText);
   }
 
   return rawText
     .split(/\r?\n/)
-    .map(line => line.replace(/\uA0/g, ' ').trim())
+    .map(line => line.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ').trim())
     .filter(line => line.length > 0);
 }
 
@@ -1224,7 +1260,7 @@ function extractNoteTitleAndPreview(item) {
   if (lines.length > 0) {
     rawFirstLine = lines[0]; // Treat ONLY the first non-empty line as the title source
     if (lines.length > 1) {
-      preview = lines.slice(1).join(" "); // Everything after the first line becomes the preview
+      preview = cleanPreviewText(lines.slice(1).join(" ")); // Everything after the first line becomes the preview
     } else {
       preview = ""; // If only one line exists
     }
@@ -1302,7 +1338,7 @@ function createCardElement(item) {
   } else if (item.type === "quote") {
     customBodyHtml = `
       <h3 class="card-title">${escapeHtml(title)}</h3>
-      ${item.content ? `<div class="quote-content">"${stripHtml(item.content)}"</div>` : ''}
+      ${item.content ? `<div class="quote-content">"${escapeHtml(stripHtml(item.content))}"</div>` : ''}
       ${item.author ? `<span class="quote-author">— ${escapeHtml(item.author)}</span>` : ''}
     `;
   } else if (item.type === "image") {
@@ -1716,6 +1752,7 @@ function registerEventListeners() {
   document.getElementById("btn-close-keep").addEventListener("click", closeKeepModal);
   document.getElementById("btn-cancel-keep").addEventListener("click", closeKeepModal);
   document.getElementById("keep-modal").addEventListener("click", (e) => {
+    if (isPickingFile) return;
     if (e.target.id === "keep-modal") closeKeepModal();
   });
 
@@ -1747,9 +1784,34 @@ function registerEventListeners() {
   });
 
   fileInput.addEventListener("change", (e) => {
+    isPickingFile = false;
+    if (filePickerTimeout) clearTimeout(filePickerTimeout);
     if (e.target.files && e.target.files.length > 0) {
       addCaptureFiles(Array.from(e.target.files));
       fileInput.value = "";
+    }
+  });
+
+  fileInput.addEventListener("cancel", () => {
+    if (filePickerTimeout) clearTimeout(filePickerTimeout);
+    setTimeout(() => {
+      isPickingFile = false;
+    }, 400);
+  });
+
+  window.addEventListener("focus", () => {
+    if (isPickingFile) {
+      setTimeout(() => {
+        isPickingFile = false;
+      }, 500);
+    }
+  });
+
+  window.addEventListener("pageshow", () => {
+    if (isPickingFile) {
+      setTimeout(() => {
+        isPickingFile = false;
+      }, 500);
     }
   });
 
@@ -1757,6 +1819,12 @@ function registerEventListeners() {
   if (uploadTriggerBtn) {
     uploadTriggerBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      e.stopPropagation();
+      isPickingFile = true;
+      if (filePickerTimeout) clearTimeout(filePickerTimeout);
+      filePickerTimeout = setTimeout(() => {
+        isPickingFile = false;
+      }, 60000);
       if (fileInput) fileInput.click();
     });
   }
@@ -2611,7 +2679,8 @@ async function handleKeepItemSubmit(e) {
 
   let title = "Kept note";
   if (itemType === "link" && plainText) {
-    title = plainText.split("\n")[0].substring(0, 45);
+    const linkLines = extractTextLinesFromHtml(noteContent || rawHtml);
+    title = linkLines.length > 0 ? cleanTitleText(linkLines[0]).substring(0, 45) : (domain || "Saved link");
     if (title.length >= 45) title += "...";
   } else if (itemType === "link" && urlVal) {
     title = domain || "Saved link";
@@ -2619,9 +2688,9 @@ async function handleKeepItemSubmit(e) {
     title = author ? `Quote by ${author}` : "Kept quote";
   } else if (captureFiles.length > 0) {
     title = captureFiles[0].name.replace(/\.[^/.]+$/, "");
-  } else if (plainText) {
-    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    title = noteLines[0] || "Kept note";
+  } else if (plainText || noteContent) {
+    const noteLines = extractTextLinesFromHtml(noteContent || rawHtml);
+    title = noteLines.length > 0 ? (cleanTitleText(noteLines[0]) || "Kept note") : "Kept note";
   } else if (urlVal) {
     title = domain || "Saved link";
   }
@@ -3221,10 +3290,11 @@ async function handleSaveDetailChanges(e) {
 
   let newTitle = currentDetailItem.title;
   if (currentDetailItem.type === "note") {
-    const noteLines = plainText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    newTitle = noteLines[0] || currentDetailItem.title || "Kept note";
+    const noteLines = extractTextLinesFromHtml(noteContent || rawContent);
+    newTitle = noteLines.length > 0 ? (cleanTitleText(noteLines[0]) || "Kept note") : (currentDetailItem.title || "Kept note");
   } else if (currentDetailItem.type === "link") {
-    newTitle = plainText.split("\n")[0].substring(0, 45);
+    const linkLines = extractTextLinesFromHtml(noteContent || rawContent);
+    newTitle = linkLines.length > 0 ? cleanTitleText(linkLines[0]).substring(0, 45) : (currentDetailItem.title || "Saved link");
     if (newTitle.length >= 45) newTitle += "...";
     newTitle = newTitle || currentDetailItem.title || "Saved link";
   }
@@ -3299,31 +3369,72 @@ function handleDeleteDetailItem() {
 /* -------------------------------------------------------------
  * One-time LocalStorage Migration
  * ------------------------------------------------------------- */
+function getMigratableLocalMemories() {
+  const localRaw = localStorage.getItem("keepr_db");
+  if (!localRaw) return [];
+
+  let parsed = [];
+  try {
+    parsed = JSON.parse(localRaw);
+  } catch (e) {
+    return [];
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) return [];
+
+  // Seed data signatures to prevent false-positive migration on fresh instances
+  const seedSignatures = new Set(
+    INITIAL_DATA.map(item => `${item.id}|${(item.title || "").trim().toLowerCase()}`)
+  );
+
+  return parsed.filter(item => {
+    if (!item || typeof item !== "object") return false;
+    
+    const id = item.id || "";
+    const title = (item.title || "").trim().toLowerCase();
+    const content = (item.content || "").trim().toLowerCase();
+    const sig = `${id}|${title}`;
+
+    // Skip initial pristine seed demo items
+    if (seedSignatures.has(sig)) return false;
+
+    // Filter out corrupted / empty items
+    const hasText = title.length > 0 || content.length > 0;
+    const hasFile = !!(item.imageUrl || item.url || item.storagePath || item.fileName);
+    if (!hasText && !hasFile) return false;
+
+    // Filter out any accidentally saved import dialog copy artifacts
+    if (title.includes("import your existing memories") || 
+        title.includes("cloud import") || 
+        content.includes("we found memories saved locally")) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
 function checkAndShowMigrationDialog() {
   const isHandled = localStorage.getItem("keepr_migration_handled");
   if (isHandled === "true") return;
 
-  const localRaw = localStorage.getItem("keepr_db");
-  if (!localRaw) return;
+  const migratableItems = getMigratableLocalMemories();
+  if (migratableItems.length === 0) {
+    return;
+  }
 
-  try {
-    const localItems = JSON.parse(localRaw);
-    if (Array.isArray(localItems) && localItems.length > 0) {
-      if (database && database.length > 0) {
-        return; // User already has artifacts in active cloud database
-      }
-      const modal = document.getElementById("migration-modal");
-      if (modal) {
-        const descEl = document.getElementById("migration-modal-desc");
-        if (descEl) {
-          descEl.textContent = `We found ${localItems.length} ${localItems.length === 1 ? 'memory' : 'memories'} saved locally in your browser. Would you like to import them into your cloud account?`;
-        }
-        modal.classList.add("active");
-        if (window.lucide) window.lucide.createIcons();
-      }
+  if (database && database.length > 0) {
+    return; // User already has artifacts in active cloud database
+  }
+
+  const modal = document.getElementById("migration-modal");
+  if (modal) {
+    const descEl = document.getElementById("migration-modal-desc");
+    if (descEl) {
+      descEl.textContent = `We found ${migratableItems.length} ${migratableItems.length === 1 ? 'memory' : 'memories'} saved locally in your browser. Would you like to import them into your cloud account?`;
     }
-  } catch (e) {
-    console.warn("Error parsing local keepr_db for migration check:", e);
+    modal.classList.add("active");
+    if (window.lucide) window.lucide.createIcons();
   }
 }
 
@@ -3356,40 +3467,19 @@ async function handleImportMigration() {
   if (importBtn) importBtn.disabled = true;
   if (skipBtn) skipBtn.disabled = true;
 
-  const localRaw = localStorage.getItem("keepr_db");
-  if (!localRaw) {
+  const migratableItems = getMigratableLocalMemories();
+  if (migratableItems.length === 0) {
     localStorage.setItem("keepr_migration_handled", "true");
-    if (modal) modal.classList.remove("active");
-    return;
-  }
-
-  let localItems = [];
-  try {
-    localItems = JSON.parse(localRaw);
-  } catch (e) {
-    localItems = [];
-  }
-
-  // Filter out any accidentally saved import dialog copy artifacts
-  localItems = localItems.filter(item => {
-    const title = (item.title || "").toLowerCase();
-    const content = (item.content || "").toLowerCase();
-    return !title.includes("import your existing memories") && 
-           !title.includes("cloud import") &&
-           !content.includes("we found memories saved locally");
-  });
-
-  if (localItems.length === 0) {
-    localStorage.setItem("keepr_migration_handled", "true");
+    localStorage.removeItem("keepr_db");
     if (modal) modal.classList.remove("active");
     return;
   }
 
   let importedCount = 0;
-  for (let i = 0; i < localItems.length; i++) {
-    const item = { ...localItems[i] };
+  for (let i = 0; i < migratableItems.length; i++) {
+    const item = { ...migratableItems[i] };
     if (statusEl) {
-      statusEl.textContent = `Importing (${i + 1}/${localItems.length})...`;
+      statusEl.textContent = `Importing (${i + 1}/${migratableItems.length})...`;
     }
 
     // Convert and upload files if base64 or relative asset

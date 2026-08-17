@@ -120,9 +120,7 @@ export class LocalStorageArtifactRepository {
   async getAll() {
     const raw = localStorage.getItem(this.storageKey);
     if (!raw) {
-      const items = JSON.parse(JSON.stringify(INITIAL_DATA));
-      await this.saveAll(items);
-      return items;
+      return JSON.parse(JSON.stringify(INITIAL_DATA));
     }
     try {
       const parsed = JSON.parse(raw);
