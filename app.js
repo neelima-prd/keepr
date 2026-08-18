@@ -13,8 +13,6 @@ let activeTypeFilter = "all";
 let activeTagFilters = [];
 let searchQuery = "";
 let captureFiles = [];
-let isPickingFile = false;
-let filePickerTimeout = null;
 let currentDetailItem = null;
 let detailOriginTab = "home";
 
@@ -145,26 +143,9 @@ function closeAllOverlayDrawers() {
 }
 
 function handlePopState(e) {
-  if (isPickingFile) {
-    return;
-  }
-  const detailDrawer = document.getElementById("detail-drawer");
-  const keepModal = document.getElementById("keep-modal");
   const confirmModal = document.getElementById("confirm-dialog-modal");
-
   if (confirmModal && confirmModal.classList.contains("active")) {
     closeConfirmDialog();
-    return;
-  }
-  if (keepModal && keepModal.classList.contains("active")) {
-    if (!isPickingFile) {
-      closeKeepModal();
-    }
-    return;
-  }
-  if (detailDrawer && detailDrawer.classList.contains("active")) {
-    detailDrawer.classList.remove("active");
-    currentDetailItem = null;
     return;
   }
 }
@@ -183,16 +164,12 @@ function initRouter() {
       return;
     }
 
-    closeAllOverlayDrawers();
-
     const tabName = rawHash.substring(1);
-    
-    // Validate tab
     const tabs = ["home", "search", "settings"];
-    if (tabs.includes(tabName)) {
-      navigateToTab(tabName);
-    } else {
-      navigateToTab("home");
+    const targetTab = tabs.includes(tabName) ? tabName : "home";
+
+    if (currentTab !== targetTab) {
+      navigateToTab(targetTab);
     }
   };
 
@@ -263,6 +240,18 @@ async function initAuth() {
         if (session && session.user) {
           await ensureUserProfileExists(session.user);
         }
+
+        const newUserId = session?.user?.id || null;
+        const currentUserId = currentUser?.id || null;
+
+        // If the same authenticated user session is refreshed/renewed, do not reload DB or re-navigate tabs
+        if (newUserId && currentUserId && newUserId === currentUserId) {
+          currentSession = session;
+          currentUser = session.user;
+          renderUserProfile(currentUser);
+          return;
+        }
+
         handleSessionState(session);
       });
     } catch (e) {
@@ -1752,7 +1741,6 @@ function registerEventListeners() {
   document.getElementById("btn-close-keep").addEventListener("click", closeKeepModal);
   document.getElementById("btn-cancel-keep").addEventListener("click", closeKeepModal);
   document.getElementById("keep-modal").addEventListener("click", (e) => {
-    if (isPickingFile) return;
     if (e.target.id === "keep-modal") closeKeepModal();
   });
 
@@ -1784,8 +1772,6 @@ function registerEventListeners() {
   });
 
   fileInput.addEventListener("change", (e) => {
-    isPickingFile = false;
-    if (filePickerTimeout) clearTimeout(filePickerTimeout);
     if (e.target.files && e.target.files.length > 0) {
       addCaptureFiles(Array.from(e.target.files));
       fileInput.value = "";
@@ -1793,26 +1779,7 @@ function registerEventListeners() {
   });
 
   fileInput.addEventListener("cancel", () => {
-    if (filePickerTimeout) clearTimeout(filePickerTimeout);
-    setTimeout(() => {
-      isPickingFile = false;
-    }, 400);
-  });
-
-  window.addEventListener("focus", () => {
-    if (isPickingFile) {
-      setTimeout(() => {
-        isPickingFile = false;
-      }, 500);
-    }
-  });
-
-  window.addEventListener("pageshow", () => {
-    if (isPickingFile) {
-      setTimeout(() => {
-        isPickingFile = false;
-      }, 500);
-    }
+    // Native file picker cancelled by user - preserve open modal and existing state
   });
 
   const uploadTriggerBtn = document.getElementById("btn-trigger-upload");
@@ -1820,11 +1787,6 @@ function registerEventListeners() {
     uploadTriggerBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      isPickingFile = true;
-      if (filePickerTimeout) clearTimeout(filePickerTimeout);
-      filePickerTimeout = setTimeout(() => {
-        isPickingFile = false;
-      }, 60000);
       if (fileInput) fileInput.click();
     });
   }
@@ -1837,7 +1799,8 @@ function registerEventListeners() {
       const editorId = toolbar && toolbar.id === "detail-toolbar" ? "detail-note" : "keep-capture-editor";
       
       if (btn.classList.contains("emoji-trigger-btn") || btn.getAttribute("data-action") === "emoji") {
-        openEmojiPicker(btn, editorId);
+        e.stopPropagation();
+        toggleEmojiPicker(btn, editorId);
         return;
       }
 
@@ -2107,13 +2070,14 @@ const EMOJI_KEYWORDS = {
 let activeEmojiEditorId = "keep-capture-editor";
 let currentEmojiCategory = "smileys";
 let savedEmojiRange = null;
+let currentEmojiTriggerBtn = null;
 
 function saveEditorSelection(editorEl) {
   if (!editorEl) return;
   const sel = window.getSelection();
   if (sel && sel.rangeCount > 0) {
     const range = sel.getRangeAt(0);
-    if (editorEl.contains(range.commonAncestorContainer)) {
+    if (editorEl.contains(range.commonAncestorContainer) || range.commonAncestorContainer === editorEl) {
       savedEmojiRange = range.cloneRange();
     }
   }
@@ -2125,7 +2089,7 @@ function restoreEditorSelection(editorEl) {
   const sel = window.getSelection();
   if (!sel) return;
 
-  if (savedEmojiRange && editorEl.contains(savedEmojiRange.commonAncestorContainer)) {
+  if (savedEmojiRange && (editorEl.contains(savedEmojiRange.commonAncestorContainer) || savedEmojiRange.commonAncestorContainer === editorEl)) {
     sel.removeAllRanges();
     sel.addRange(savedEmojiRange);
   } else {
@@ -2137,6 +2101,71 @@ function restoreEditorSelection(editorEl) {
     sel.addRange(range);
     savedEmojiRange = range.cloneRange();
   }
+}
+
+function toggleEmojiPicker(triggerBtn, targetEditorId) {
+  const popover = document.getElementById("emoji-picker-popover");
+  if (!popover) return;
+
+  const isOpen = popover.style.display !== "none";
+  if (isOpen && currentEmojiTriggerBtn === triggerBtn) {
+    closeEmojiPicker();
+  } else {
+    openEmojiPicker(triggerBtn, targetEditorId);
+  }
+}
+
+function openEmojiPicker(triggerBtn, targetEditorId) {
+  currentEmojiTriggerBtn = triggerBtn;
+  activeEmojiEditorId = targetEditorId;
+
+  const targetEditor = document.getElementById(targetEditorId);
+  if (targetEditor) {
+    saveEditorSelection(targetEditor);
+  }
+
+  const popover = document.getElementById("emoji-picker-popover");
+  const searchInput = document.getElementById("emoji-search-input");
+  
+  if (!popover) return;
+
+  const rect = triggerBtn.getBoundingClientRect();
+  const popoverWidth = Math.min(320, window.innerWidth - 20);
+  const popoverHeight = Math.min(320, window.innerHeight - 36);
+
+  popover.style.width = `${popoverWidth}px`;
+
+  let left = rect.left;
+  let top = rect.bottom + 6;
+
+  if (left + popoverWidth > window.innerWidth - 10) {
+    left = window.innerWidth - popoverWidth - 10;
+  }
+  if (left < 10) left = 10;
+
+  if (top + popoverHeight > window.innerHeight - 10) {
+    top = Math.max(10, rect.top - popoverHeight - 6);
+  }
+  if (top < 10) top = 10;
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+  popover.style.display = "flex";
+
+  if (searchInput) {
+    searchInput.value = "";
+  }
+
+  renderEmojiPickerGrid();
+  lucide.createIcons();
+}
+
+function closeEmojiPicker() {
+  const popover = document.getElementById("emoji-picker-popover");
+  if (popover) {
+    popover.style.display = "none";
+  }
+  currentEmojiTriggerBtn = null;
 }
 
 function initEmojiPicker() {
@@ -2151,7 +2180,7 @@ function initEmojiPicker() {
   ["keep-capture-editor", "detail-note"].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
-      ["keyup", "mouseup", "focus", "input"].forEach(evt => {
+      ["keyup", "mouseup", "touchend", "focus", "input"].forEach(evt => {
         el.addEventListener(evt, () => saveEditorSelection(el));
       });
     }
@@ -2166,12 +2195,18 @@ function initEmojiPicker() {
   }
 
   if (closeBtn) {
-    closeBtn.addEventListener("click", closeEmojiPicker);
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeEmojiPicker();
+    });
   }
 
   if (categoriesContainer) {
     categoriesContainer.querySelectorAll(".emoji-cat-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         categoriesContainer.querySelectorAll(".emoji-cat-btn").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         currentEmojiCategory = btn.getAttribute("data-category");
@@ -2181,15 +2216,18 @@ function initEmojiPicker() {
     });
   }
 
-  document.addEventListener("click", (e) => {
-    if (popover.style.display !== "none") {
-      const isTrigger = e.target.closest(".emoji-trigger-btn");
+  // Robust outside interaction dismissal (pointerdown handles both mouse clicks and touch taps)
+  const handleOutsideInteraction = (e) => {
+    if (popover && popover.style.display !== "none") {
+      const isTrigger = e.target.closest && e.target.closest(".emoji-trigger-btn");
       const isInside = popover.contains(e.target);
       if (!isTrigger && !isInside) {
         closeEmojiPicker();
       }
     }
-  });
+  };
+
+  document.addEventListener("pointerdown", handleOutsideInteraction);
 }
 
 function renderEmojiPickerGrid(searchFilter = "") {
@@ -2237,57 +2275,6 @@ function renderEmojiPickerGrid(searchFilter = "") {
   });
 }
 
-function openEmojiPicker(triggerBtn, targetEditorId) {
-  activeEmojiEditorId = targetEditorId;
-  const targetEditor = document.getElementById(targetEditorId);
-  if (targetEditor) {
-    saveEditorSelection(targetEditor);
-  }
-
-  const popover = document.getElementById("emoji-picker-popover");
-  const searchInput = document.getElementById("emoji-search-input");
-  
-  if (!popover) return;
-
-  const rect = triggerBtn.getBoundingClientRect();
-  const popoverWidth = Math.min(320, window.innerWidth - 24);
-  const popoverHeight = Math.min(310, window.innerHeight - 36);
-
-  popover.style.width = `${popoverWidth}px`;
-
-  let left = rect.left;
-  let top = rect.bottom + 8;
-
-  if (left + popoverWidth > window.innerWidth - 12) {
-    left = window.innerWidth - popoverWidth - 12;
-  }
-  if (left < 12) left = 12;
-
-  if (top + popoverHeight > window.innerHeight - 12) {
-    top = Math.max(12, rect.top - popoverHeight - 8);
-  }
-  if (top < 12) top = 12;
-
-  popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
-  popover.style.display = "flex";
-
-  if (searchInput) {
-    searchInput.value = "";
-    setTimeout(() => searchInput.focus(), 50);
-  }
-
-  renderEmojiPickerGrid();
-  lucide.createIcons();
-}
-
-function closeEmojiPicker() {
-  const popover = document.getElementById("emoji-picker-popover");
-  if (popover) {
-    popover.style.display = "none";
-  }
-}
-
 function insertEmojiAtCursor(editorId, emoji) {
   const editorEl = document.getElementById(editorId);
   if (!editorEl) return;
@@ -2297,7 +2284,7 @@ function insertEmojiAtCursor(editorId, emoji) {
   const sel = window.getSelection();
   if (sel && sel.rangeCount > 0) {
     const range = sel.getRangeAt(0);
-    if (editorEl.contains(range.commonAncestorContainer)) {
+    if (editorEl.contains(range.commonAncestorContainer) || range.commonAncestorContainer === editorEl) {
       range.deleteContents();
       const textNode = document.createTextNode(emoji);
       range.insertNode(textNode);
@@ -2313,6 +2300,7 @@ function insertEmojiAtCursor(editorId, emoji) {
     }
   }
 
+  editorEl.focus();
   document.execCommand("insertText", false, emoji);
   editorEl.dispatchEvent(new Event("input", { bubbles: true }));
 }

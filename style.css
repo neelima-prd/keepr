@@ -3918,6 +3918,8 @@ button, input, select, textarea, .nav-tab, .chip-filter, .tag-badge, .kept-card,
   gap: 10px;
   backdrop-filter: blur(12px);
   animation: emojiPopoverFade 0.18s ease-out forwards;
+  touch-action: manipulation;
+  user-select: none;
 }
 
 @keyframes emojiPopoverFade {
@@ -4012,6 +4014,8 @@ button, input, select, textarea, .nav-tab, .chip-filter, .tag-badge, .kept-card,
   cursor: pointer;
   opacity: 0.6;
   transition: opacity var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+  touch-action: manipulation;
+  user-select: none;
 }
 
 .emoji-cat-btn:hover {
@@ -4033,6 +4037,7 @@ button, input, select, textarea, .nav-tab, .chip-filter, .tag-badge, .kept-card,
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
+  touch-action: pan-y;
 }
 
 .emoji-item-btn {
@@ -4047,6 +4052,7 @@ button, input, select, textarea, .nav-tab, .chip-filter, .tag-badge, .kept-card,
   justify-content: center;
   transition: transform 0.12s ease, background-color 0.12s ease;
   user-select: none;
+  touch-action: manipulation;
 }
 
 .emoji-item-btn:hover {
