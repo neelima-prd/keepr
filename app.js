@@ -2250,8 +2250,10 @@ function openEmojiPicker(triggerBtn, targetEditorId) {
   if (!popover) return;
 
   const rect = triggerBtn.getBoundingClientRect();
-  const popoverWidth = 320;
-  const popoverHeight = 310;
+  const popoverWidth = Math.min(320, window.innerWidth - 24);
+  const popoverHeight = Math.min(310, window.innerHeight - 36);
+
+  popover.style.width = `${popoverWidth}px`;
 
   let left = rect.left;
   let top = rect.bottom + 8;
@@ -2262,7 +2264,7 @@ function openEmojiPicker(triggerBtn, targetEditorId) {
   if (left < 12) left = 12;
 
   if (top + popoverHeight > window.innerHeight - 12) {
-    top = rect.top - popoverHeight - 8;
+    top = Math.max(12, rect.top - popoverHeight - 8);
   }
   if (top < 12) top = 12;
 
