@@ -39,7 +39,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 function initServiceWorker() {
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/public/sw.js')
+      navigator.serviceWorker.register('/sw.js')
         .then((registration) => {
           console.log('[Keepr PWA] Service worker registered:', registration.scope);
           registration.onupdatefound = () => {

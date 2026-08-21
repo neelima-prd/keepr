@@ -1,4 +1,4 @@
-const CACHE_NAME = 'keepr-shell-v1';
+const CACHE_NAME = 'keepr-shell-v2';
 
 // Static App Shell assets to cache
 const APP_SHELL_ASSETS = [
@@ -7,10 +7,11 @@ const APP_SHELL_ASSETS = [
   '/style.css',
   '/app.js',
   '/manifest.json',
-  '/public/icons/icon-192.png',
-  '/public/icons/icon-512.png',
-  '/public/icons/apple-touch-icon.png',
-  '/public/icons/icon.svg'
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/maskable-512.png',
+  '/icons/apple-touch-icon.png',
+  '/icons/icon.svg'
 ];
 
 // Installation: Pre-cache static app shell assets
