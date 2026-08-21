@@ -1,4 +1,4 @@
-const CACHE_NAME = 'keepr-shell-v2';
+const CACHE_NAME = 'keepr-shell-v3';
 
 // Static App Shell assets to cache
 const APP_SHELL_ASSETS = [
@@ -10,7 +10,10 @@ const APP_SHELL_ASSETS = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/maskable-512.png',
+  '/icons/apple-touch-icon-v2.png',
   '/icons/apple-touch-icon.png',
+  '/apple-touch-icon.png',
+  '/apple-touch-icon-precomposed.png',
   '/icons/icon.svg'
 ];
 
